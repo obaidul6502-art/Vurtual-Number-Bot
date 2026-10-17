@@ -20,7 +20,7 @@ def run_flask():
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# NOTUN BOT TOKEN & ADMIN ID
+# BOT TOKEN & ADMIN ID
 TOKEN = "8624066909:AAEzSG-mMxGGZgXlffeMaJG-4NFNsoia0hI"
 ADMIN_ID = 6132325140  
 
@@ -75,10 +75,9 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
         await update.message.reply_text("⛔ Apni admin non!")
         return
-
     try:
         args = context.args
-        item_type = args[0].lower()
+        item_type = args[0].lower() # e.g., telegram or whatsapp
         price = float(args[1])
         item_data = " ".join(args[2:])
 
@@ -90,7 +89,7 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ Added {item_type}!\nPrice: ${price}\nData: `{item_data}`", parse_mode="Markdown")
     except Exception:
-        await update.message.reply_text("❌ Format: `/add number 1.5 +8801700000000`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Format: `/add telegram 1.5 +8801700000000`", parse_mode="Markdown")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -105,7 +104,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     caption = update.message.caption
     if not caption or not caption.startswith("/addfile"):
-        await update.message.reply_text("⚠️ Caption format: `/addfile number 1.5`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Caption format: `/addfile telegram 1.5`", parse_mode="Markdown")
         return
 
     try:
@@ -153,9 +152,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     get_user(user.id, user.username)
 
-    welcome_text = f"👋 **Welcome, {user.first_name}!**\n\nMarketplace bot-e apnake shagotom."
+    welcome_text = f"👋 **Welcome, {user.first_name}!**\n\nMarketplace bot-e apnake shagotom. Nicher menu theke option select karun."
     keyboard = [
-        ["🛒 Buy number", "📧 Buy email"],
+        ["🛒 Buy Numbers", "📧 Buy Emails"],
         ["💰 Deposit", "👤 Profile"],
         ["💸 Withdraw"]
     ]
@@ -179,15 +178,100 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("💳 Deposit method select karun:", reply_markup=reply_markup)
 
-    elif text in ["🛒 Buy number", "📧 Buy email"]:
-        item_type = "number" if text == "🛒 Buy number" else "email"
+    elif text == "🛒 Buy Numbers":
+        # Database theke check korbo telegram ebong whatsapp er stock o price koto ache
         conn = sqlite3.connect("bot_database.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = ? LIMIT 1", (item_type,))
+        
+        # Telegram stock & price
+        cursor.execute("SELECT COUNT(*), price FROM stock WHERE item_type = 'telegram'", ())
+        tg_row = cursor.fetchone()
+        tg_count = tg_row[0] if tg_row else 0
+        tg_price = tg_row[1] if tg_row and tg_row[1] is not None else 0.0
+
+        # WhatsApp stock & price
+        cursor.execute("SELECT COUNT(*), price FROM stock WHERE item_type = 'whatsapp'", ())
+        wa_row = cursor.fetchone()
+        wa_count = wa_row[0] if wa_row else 0
+        wa_price = wa_row[1] if wa_row and wa_row[1] is not None else 0.0
+        
+        conn.close()
+
+        keyboard = [
+            [InlineKeyboardButton(f"📲 Telegram (Stock: {tg_count} | ${tg_price})", callback_data="cat_telegram")],
+            [InlineKeyboardButton(f"📱 WhatsApp (Stock: {wa_count} | ${wa_price})", callback_data="cat_whatsapp")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("📂 Kono category er number kinte chan select karun:", reply_markup=reply_markup)
+
+    elif text == "📧 Buy Emails":
+        await update.message.reply_text("❌ Email stock ekhon faka ache.")
+
+    elif text == "💸 Withdraw":
+        await update.message.reply_text("💸 Balance porjapto noi.")
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+
+    data = query.data
+
+    if data == "pay_bkash":
+        await query.edit_message_text(f"📲 Send Money to `017XXXXXXXX` and notify Admin with User ID (`{user.id}`).", parse_mode="Markdown")
+    elif data == "pay_crypto":
+        await query.edit_message_text(f"🪙 Send USDT to `TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` and notify Admin with User ID (`{user.id}`).", parse_mode="Markdown")
+    
+    elif data == "back_main":
+        await query.edit_message_text("🔙 Main menu-te phire asha hoyeche. `/start` command use kore main menu open karun.", parse_mode="Markdown")
+
+    # Category Selection (Telegram or WhatsApp)
+    elif data in ["cat_telegram", "cat_whatsapp"]:
+        platform = "telegram" if data == "cat_telegram" else "whatsapp"
+        
+        keyboard = [
+            [InlineKeyboardButton("🛒 Single Purchase", callback_data=f"single_{platform}")],
+            [InlineKeyboardButton("📦 Bulk Purchase (5 Pcs)", callback_data=f"bulk_{platform}_5")],
+            [InlineKeyboardButton("📦 Bulk Purchase (10 Pcs)", callback_data=f"bulk_{platform}_10")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_to_buy")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f"📌 **{platform.upper()}** selected. Purchase type select karun:", reply_markup=reply_markup, parse_mode="Markdown")
+
+    elif data == "back_to_buy":
+        # Back to categories
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*), price FROM stock WHERE item_type = 'telegram'", ())
+        tg_row = cursor.fetchone()
+        tg_count = tg_row[0] if tg_row else 0
+        tg_price = tg_row[1] if tg_row and tg_row[1] is not None else 0.0
+
+        cursor.execute("SELECT COUNT(*), price FROM stock WHERE item_type = 'whatsapp'", ())
+        wa_row = cursor.fetchone()
+        wa_count = wa_row[0] if wa_row else 0
+        wa_price = wa_row[1] if wa_row and wa_row[1] is not None else 0.0
+        conn.close()
+
+        keyboard = [
+            [InlineKeyboardButton(f"📲 Telegram (Stock: {tg_count} | ${tg_price})", callback_data="cat_telegram")],
+            [InlineKeyboardButton(f"📱 WhatsApp (Stock: {wa_count} | ${wa_price})", callback_data="cat_whatsapp")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="back_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("📂 Kono category er number kinte chan select karun:", reply_markup=reply_markup)
+
+    # Single Purchase Handling
+    elif data.startswith("single_"):
+        platform = data.split("_")[1]
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = ? LIMIT 1", (platform,))
         stock_item = cursor.fetchone()
 
         if not stock_item:
-            await update.message.reply_text(f"❌ Current {item_type} stock is empty!")
+            await query.edit_message_text(f"❌ Current {platform} stock is empty!\n\n<a href='back_to_buy'>🔙 Back</a>", parse_mode="Markdown")
             conn.close()
             return
 
@@ -195,7 +279,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_balance = get_user(user.id, user.username)
 
         if user_balance < price:
-            await update.message.reply_text(f"⚠️ Insufficient balance! Price: ${price}, Balance:${user_balance:.2f}")
+            await query.edit_message_text(f"⚠️ Insufficient balance! Price: ${price}, Balance:${user_balance:.2f}")
             conn.close()
             return
 
@@ -204,21 +288,53 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
 
-        await update.message.reply_text(f"🎉 **Purchase Successful!**\n📦 Type: {item_type}\n🔑 Details: `{item_data}`", parse_mode="Markdown")
+        keyboard = [[InlineKeyboardButton("🔙 Back to Categories", callback_data="back_to_buy")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-    elif text == "💸 Withdraw":
-        await update.message.reply_text("💸 Balance porjapto noi.")
+        await query.edit_message_text(f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform}`\n🔑 Details: `{item_data}`", reply_markup=reply_markup, parse_mode="Markdown")
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "pay_bkash":
-        await query.edit_message_text(f"📲 Send Money to `017XXXXXXXX` and notify Admin with User ID (`{query.from_user.id}`).")
-    elif query.data == "pay_crypto":
-        await query.edit_message_text(f"🪙 Send USDT to `TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` and notify Admin with User ID (`{query.from_user.id}`).")
+    # Bulk Purchase Handling
+    elif data.startswith("bulk_"):
+        parts = data.split("_")
+        platform = parts[1]
+        count = int(parts[2])
+
+        conn = sqlite3.connect("bot_database.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = ? LIMIT ?", (platform, count))
+        items = cursor.fetchall()
+
+        if len(items) < count:
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data=f"cat_{platform}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(f"❌ Not enough stock! Available: {len(items)}, Required: {count}", reply_markup=reply_markup)
+            conn.close()
+            return
+
+        total_price = sum(item[2] for item in items)
+        user_balance = get_user(user.id, user.username)
+
+        if user_balance < total_price:
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data=f"cat_{platform}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(f"⚠️ Insufficient balance! Total Price: ${total_price:.2f}, Balance:${user_balance:.2f}", reply_markup=reply_markup)
+            conn.close()
+            return
+
+        update_balance(user.id, -total_price)
+        item_ids = [item[0] for item in items]
+        item_details = "\n".join([f"- `{item[1]}`" for item in items])
+
+        cursor.executemany("DELETE FROM stock WHERE id = ?", [(i,) for i in item_ids])
+        conn.commit()
+        conn.close()
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Categories", callback_data="back_to_buy")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(f"🎉 **Bulk Purchase Successful!**\n📦 Platform: `{platform}`\n🔢 Total Items: {count}\n💰 Total Cost: `${total_price:.2f}`\n\n🔑 **Details:**\n{item_details}", reply_markup=reply_markup, parse_mode="Markdown")
 
 def main():
-    # Start Dummy Web Server in Background Thread
     server_thread = Thread(target=run_flask)
     server_thread.daemon = True
     server_thread.start()
@@ -232,7 +348,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("New Bot is running cleanly...")
+    print("Bot with Telegram/WhatsApp Categories & Back Buttons is running...")
     application.run_polling()
 
 if __name__ == "__main__":
