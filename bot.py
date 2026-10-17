@@ -110,7 +110,6 @@ def get_stock_info(item_type):
     price = row[1] if row and row[1] is not None else 0.0
     return count, price
 
-# --- STOCK ADD WITH NOTIFICATION ---
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -173,10 +172,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        stock_data = [(item_type, line, price) for line in lines]
         
-        args_str = ','.join(cursor.mogrify("(%s,%s,%s)", x).decode('utf-8') for x in stock_data)
-        cursor.execute("INSERT INTO stock (item_type, item_data, price) VALUES " + args_str)
+        for line in lines:
+            cursor.execute("INSERT INTO stock (item_type, item_data, price) VALUES (%s, %s, %s)", (item_type, line, price))
+            
         conn.commit()
         cursor.close()
         conn.close()
@@ -330,7 +329,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_step = context.user_data.get("step")
 
-    # Handle Cancel or Back button
     if text in ["❌ Cancel", "🔙 Back"]:
         if user_step == "waiting_for_bulk_qty":
             context.user_data["step"] = "purchase_type"
@@ -355,12 +353,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
             return
 
-    # Handle Custom Bulk Quantity Input safely
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
             if not numbers_found:
-                await update.message.reply_text("❌ দয়া করে সঠিক সংখ্যা (Number) টাইপ করুন (jemon: `10`, `50`, `200`):", parse_mode="Markdown")
+                await update.message.reply_text("❌ Doyakore sothik shongkha (Number) type korun:")
                 return
             
             qty = int(numbers_found[0])
@@ -371,6 +368,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             platform = context.user_data.get("selected_platform", "whatsapp")
             conn = get_db_connection()
             cursor = conn.cursor()
+            
             cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = %s LIMIT %s", (platform, qty))
             items = cursor.fetchall()
 
@@ -392,16 +390,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             update_balance(user.id, -total_price)
-            item_ids = [item[0] for item in items]
-            item_texts = [item[1] for item in items]
-
-            cursor.execute("DELETE FROM stock WHERE id = ANY(%s)", (item_ids,))
-
+            
+            item_texts = []
             for item in items:
+                stock_id, item_data, price = item
+                item_texts.append(item_data)
+                cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
                 cursor.execute(
                     "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
-                    (user.id, platform, item[1], item[2])
+                    (user.id, platform, item_data, price)
                 )
+
             conn.commit()
             cursor.close()
             conn.close()
@@ -618,7 +617,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot fully fixed with smooth navigation and successful purchase logic...")
+    print("Bot fully fixed for database bulk delete and smooth purchase...")
     application.run_polling()
 
 if __name__ == "__main__":
