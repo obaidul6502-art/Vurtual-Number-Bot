@@ -1,6 +1,7 @@
 import os
 import psycopg2
 import logging
+from datetime import datetime
 from threading import Thread
 from flask import Flask
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
@@ -47,6 +48,17 @@ def init_db():
             item_type TEXT,
             item_data TEXT,
             price REAL
+        )
+    """)
+    # History table for tracking purchases with dates
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            platform TEXT,
+            item_data TEXT,
+            price REAL,
+            purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
@@ -98,6 +110,7 @@ def get_stock_info(item_type):
     price = row[1] if row and row[1] is not None else 0.0
     return count, price
 
+# --- STOCK ADD WITH NOTIFICATION TO ALL USERS ---
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -117,6 +130,19 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         await update.message.reply_text(f"✅ Added {item_type}!\nPrice: ${price}\nData: `{item_data}`", parse_mode="Markdown")
+
+        # Broadcast notification to all users about new stock
+        users = get_all_users()
+        for uid in users:
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=f"🚨 **New Stock Alert!**\n\n📦 **Platform:** `{item_type.upper()}`\n💰 **Price:** `${price:.2f}`\n\nEkhoni bot e giye number kinun!",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+
     except Exception:
         await update.message.reply_text("❌ Format: `/add whatsapp 0.09 +8801700000000`", parse_mode="Markdown")
 
@@ -133,7 +159,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     caption = update.message.caption
     if not caption or not caption.startswith("/addfile"):
-        await update.message.reply_text("⚠️ Caption format: `/addfile whatsapp 0.09` or `/addfile telegram 0.15`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Caption format: `/addfile whatsapp 0.09`", parse_mode="Markdown")
         return
 
     try:
@@ -158,6 +184,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         await update.message.reply_text(f"🎉 Bulk Import Success!\n📦 Category: `{item_type}`\n🔢 Total Added: `{len(lines)}`", parse_mode="Markdown")
+
+        # Broadcast bulk stock alert
+        users = get_all_users()
+        for uid in users:
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=f"🚀 **New Stock Restocked!**\n\n📦 **Platform:** `{item_type.upper()}`\n🔢 **Added Quantity:** `{len(lines)} numbers`\n💰 **Price:** `${price:.2f}`\n\nStock sesh hobar age kine nin!",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -232,11 +270,13 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await status_msg.edit_text(f"✅ **Broadcast Completed!**\n\nSuccessful: {success}\nFailed: {failed}")
 
+# --- UPDATED KEYBOARDS WITH 'TODAY' AND 'HISTORY' ---
 def get_main_keyboard():
     keyboard = [
         ["🛒 Buy Number"],
         ["💳 Deposit", "📞 Support"],
-        ["👤 Profile", "💸 Withdraw"]
+        ["👤 Profile", "📅 Today"],
+        ["📜 History", "💸 Withdraw"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -314,7 +354,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
             f"📦 **Stock:** {count} numbers\n"
             f"💰 **Price:** {price:.2f} USDT per number ⭐ *your special rate*\n\n"
-            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না।\n"
+            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না።\n"
             "Choose an option:"
         )
         await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
@@ -343,6 +383,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         update_balance(user.id, -price)
         cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
+        
+        # Save to History
+        cursor.execute(
+            "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
+            (user.id, platform, item_data, price)
+        )
         conn.commit()
         cursor.close()
         conn.close()
@@ -379,6 +425,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         item_details = "\n".join([f"- `{item[1]}`" for item in items])
 
         cursor.execute("DELETE FROM stock WHERE id IN %s", (item_ids,))
+        
+        # Save all items to history
+        for item in items:
+            cursor.execute(
+                "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
+                (user.id, platform, item[1], item[2])
+            )
         conn.commit()
         cursor.close()
         conn.close()
@@ -408,6 +461,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         balance = get_user(user.id, user.username)
         profile_text = f"👤 **User Profile:**\n━━━━━━━━━━━\n🆔 ID: `{user.id}`\n👤 Username: @{user.username if user.username else 'N/A'}\n💰 Balance: `${balance:.2f} USDT`"
         await update.message.reply_text(profile_text, parse_mode="Markdown")
+
+    elif text == "📅 Today":
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Query purchases made today (UTC / Server date)
+        cursor.execute(
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND DATE(purchase_date) = CURRENT_DATE ORDER BY purchase_date DESC",
+            (user.id,)
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            await update.message.reply_text("📅 **Today's History:**\n\nAji apni kono number kenen ni.", parse_mode="Markdown")
+            return
+
+        history_msg = "📅 **Today's Purchase History:**\n━━━━━━━━━━━━━━━━━━━━━\n"
+        for row in rows:
+            plat, data, prc, dt = row
+            history_msg += f"📦 `{plat.upper()}` | 💰 `${prc:.2f}`\n🔑 `Data: {data}`\n⏱ {dt}\n--------------------\n"
+        
+        await update.message.reply_text(history_msg, parse_mode="Markdown")
+
+    elif text == "📜 History":
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s ORDER BY purchase_date DESC LIMIT 15",
+            (user.id,)
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            await update.message.reply_text("📜 **Life-Time History:**\n\nApnar kono purchase history nei.", parse_mode="Markdown")
+            return
+
+        history_msg = "📜 **Life-Time Purchase History (Last 15):**\n━━━━━━━━━━━━━━━━━━━━━\n"
+        for row in rows:
+            plat, data, prc, dt = row
+            history_msg += f"📦 `{plat.upper()}` | 💰 `${prc:.2f}`\n🔑 `Data: {data}`\n⏱ {dt}\n--------------------\n"
+        
+        await update.message.reply_text(history_msg, parse_mode="Markdown")
 
     elif text == "💸 Withdraw":
         await update.message.reply_text("💸 Balance porjapto noi. Withdraw er jonno minimum balance $10 hote hobe.")
@@ -462,7 +560,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated with PostgreSQL support...")
+    print("Bot updated with stock alerts & purchase histories...")
     application.run_polling()
 
 if __name__ == "__main__":
