@@ -291,8 +291,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "💳 Deposit":
         keyboard = [
-            [InlineKeyboardButton("💳 bKash / Nagad / Rocket", callback_data="pay_bkash")],
-            [InlineKeyboardButton("🪙 Crypto (USDT / TRC20)", callback_data="pay_crypto")]
+            [InlineKeyboardButton("💳 bKash / Nagad", callback_data="pay_bkash")],
+            [InlineKeyboardButton("🪙 Crypto (BEP-20 / USDT)", callback_data="pay_crypto")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("💳 **Select Deposit Method:**\n\nNicher method theke apnar convenient payment method select karun:", reply_markup=reply_markup, parse_mode="Markdown")
@@ -333,18 +333,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "pay_bkash":
         await query.edit_message_text(
-            "📲 **Mobile Banking Deposit (bKash / Nagad)**\n"
+            "📲 **Mobile Banking Deposit**\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "Send Money to: `017XXXXXXXX` (Personal)\n\n"
-            f"Tarpor Taka pathiye Admin ke Transaction ID o apnar User ID (`{user.id}`) diye message din.",
+            "🟢 **bKash Personal:** `01603282319`\n"
+            "🟠 **Nagad Personal:** `01603282319`\n\n"
+            f"⚠️ **Niyom:** Send Money korar por Admin-ke Transaction ID o apnar User ID (`{user.id}`) likhe message din.",
             parse_mode="Markdown"
         )
     elif data == "pay_crypto":
         await query.edit_message_text(
-            "🪙 **Crypto Deposit (USDT - TRC20)**\n"
+            "🪙 **Crypto Deposit (BEP-20 / USDT)**\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "Wallet Address:\n`TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX`\n\n"
-            f"Deposit kore Hash/TXID ebong apnar User ID (`{user.id}`) Admin ke den.",
+            "🌐 **Network:** BNB Smart Chain (BEP20)\n"
+            "💳 **Wallet Address:**\n`0x8f573aa283b98f570aacf3db0387b1c39118c29c`\n\n"
+            f"⚠️ **Niyom:** Deposit korar por Admin-ke Transaction Hash/TXID o apnar User ID (`{user.id}`) likhe message din.",
             parse_mode="Markdown"
         )
 
@@ -362,7 +364,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot with Deposit, Support and Purchase buttons running...")
+    print("Bot updated with bKash, Nagad, and BEP20 address...")
     application.run_polling()
 
 if __name__ == "__main__":
