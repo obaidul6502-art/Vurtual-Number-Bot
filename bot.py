@@ -1,12 +1,11 @@
 import os
-import sqlite3
+import psycopg2
 import logging
 from threading import Thread
 from flask import Flask
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# Render Free Web Service Dummy Server Setup
 app = Flask(__name__)
 
 @app.route('/')
@@ -20,77 +19,85 @@ def run_flask():
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# BOT TOKEN & ADMIN ID
 TOKEN = "8624066909:AAEzSG-mMxGGZgXlffeMaJG-4NFNsoia0hI"
 ADMIN_ID = 6132325140  
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Maintenance Mode Global Variable
 MAINTENANCE_MODE = False
 
-# --- DATABASE SETUP ---
+def get_db_connection():
+    if DATABASE_URL:
+        return psycopg2.connect(DATABASE_URL)
+    else:
+        raise Exception("DATABASE_URL environment variable is missing!")
+
 def init_db():
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             username TEXT,
             balance REAL DEFAULT 0.0
         )
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS stock (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             item_type TEXT,
             item_data TEXT,
             price REAL
         )
     """)
     conn.commit()
+    cursor.close()
     conn.close()
 
 init_db()
 
 def get_user(user_id, username):
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT balance FROM users WHERE user_id = %s", (user_id,))
     row = cursor.fetchone()
     if not row:
-        cursor.execute("INSERT INTO users (user_id, username, balance) VALUES (?, ?, ?)", (user_id, username, 0.0))
+        cursor.execute("INSERT INTO users (user_id, username, balance) VALUES (%s, %s, %s)", (user_id, username, 0.0))
         conn.commit()
         balance = 0.0
     else:
         balance = row[0]
+    cursor.close()
     conn.close()
     return balance
 
 def update_balance(user_id, amount):
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+    cursor.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s", (amount, user_id))
     conn.commit()
+    cursor.close()
     conn.close()
 
 def get_all_users():
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users")
     users = cursor.fetchall()
+    cursor.close()
     conn.close()
     return [u[0] for u in users]
 
 def get_stock_info(item_type):
-    conn = sqlite3.connect("bot_database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*), price FROM stock WHERE item_type = ?", (item_type,))
+    cursor.execute("SELECT COUNT(*), AVG(price) FROM stock WHERE item_type = %s", (item_type,))
     row = cursor.fetchone()
+    cursor.close()
     conn.close()
     count = row[0] if row else 0
     price = row[1] if row and row[1] is not None else 0.0
     return count, price
 
-# --- ADMIN COMMANDS ---
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -102,10 +109,11 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = float(args[1])
         item_data = " ".join(args[2:])
 
-        conn = sqlite3.connect("bot_database.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO stock (item_type, item_data, price) VALUES (?, ?, ?)", (item_type, item_data, price))
+        cursor.execute("INSERT INTO stock (item_type, item_data, price) VALUES (%s, %s, %s)", (item_type, item_data, price))
         conn.commit()
+        cursor.close()
         conn.close()
 
         await update.message.reply_text(f"✅ Added {item_type}!\nPrice: ${price}\nData: `{item_data}`", parse_mode="Markdown")
@@ -139,11 +147,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         lines = [line.strip() for line in content.splitlines() if line.strip()]
 
-        conn = sqlite3.connect("bot_database.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
         stock_data = [(item_type, line, price) for line in lines]
-        cursor.executemany("INSERT INTO stock (item_type, item_data, price) VALUES (?, ?, ?)", stock_data)
+        
+        args_str = ','.join(cursor.mogrify("(%s,%s,%s)", x).decode('utf-8') for x in stock_data)
+        cursor.execute("INSERT INTO stock (item_type, item_data, price) VALUES " + args_str)
         conn.commit()
+        cursor.close()
         conn.close()
 
         await update.message.reply_text(f"🎉 Bulk Import Success!\n📦 Category: `{item_type}`\n🔢 Total Added: `{len(lines)}`", parse_mode="Markdown")
@@ -151,7 +162,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
-# --- BALANCE ADD WITH NOTIFICATION ---
 async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -162,11 +172,8 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount = float(context.args[1])
         
         update_balance(target_user_id, amount)
-        
-        # Admin confirmation
         await update.message.reply_text(f"✅ Added `${amount}` to User ID: `{target_user_id}`", parse_mode="Markdown")
         
-        # Member notification
         try:
             await context.bot.send_message(
                 chat_id=target_user_id,
@@ -174,12 +181,11 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         except Exception:
-            await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user (User might have blocked the bot).")
+            await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user.")
 
     except Exception:
         await update.message.reply_text("❌ Format: `/addbal USER_ID AMOUNT`", parse_mode="Markdown")
 
-# --- MAINTENANCE & BROADCAST COMMANDS ---
 async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global MAINTENANCE_MODE
     user_id = update.effective_user.id
@@ -226,7 +232,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await status_msg.edit_text(f"✅ **Broadcast Completed!**\n\nSuccessful: {success}\nFailed: {failed}")
 
-# --- USER MENUS ---
 def get_main_keyboard():
     keyboard = [
         ["🛒 Buy Number"],
@@ -258,7 +263,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     if MAINTENANCE_MODE and user.id != ADMIN_ID:
-        await update.message.reply_text("🛠 **Bot is under Maintenance!**\n\nAmra bot-e notun update ba fix korchi. Khub shighroi bot abar chalu hobe. Dhoirjo dhorar jonno dhonnobad!")
+        await update.message.reply_text("🛠 **Bot is under Maintenance!**\n\nAmra bot-e notun update ba fix korchi. Khub shighroi bot abar chalu hobe.")
         return
 
     get_user(user.id, user.username)
@@ -316,13 +321,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "1️⃣ Single Purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
-        conn = sqlite3.connect("bot_database.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = ? LIMIT 1", (platform,))
+        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = %s LIMIT 1", (platform,))
         stock_item = cursor.fetchone()
 
         if not stock_item:
             await update.message.reply_text(f"❌ Current {platform.upper()} stock is empty!", reply_markup=get_purchase_type_keyboard())
+            cursor.close()
             conn.close()
             return
 
@@ -331,27 +337,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if user_balance < price:
             await update.message.reply_text(f"⚠️ Insufficient balance! Price: ${price:.2f}, Balance:${user_balance:.2f}", reply_markup=get_purchase_type_keyboard())
+            cursor.close()
             conn.close()
             return
 
         update_balance(user.id, -price)
-        cursor.execute("DELETE FROM stock WHERE id = ?", (stock_id,))
+        cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
         conn.commit()
+        cursor.close()
         conn.close()
 
         await update.message.reply_text(f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔑 Details: `{item_data}`", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
 
     elif text == "📦 Bulk purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
-        count = 5  # Standard bulk limit
+        count = 5  
 
-        conn = sqlite3.connect("bot_database.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = ? LIMIT ?", (platform, count))
+        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = %s LIMIT %s", (platform, count))
         items = cursor.fetchall()
 
         if len(items) < count:
             await update.message.reply_text(f"❌ Not enough stock! Available: {len(items)}, Required: {count}", reply_markup=get_purchase_type_keyboard())
+            cursor.close()
             conn.close()
             return
 
@@ -361,15 +370,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if user_balance < total_price:
             await update.message.reply_text(f"⚠️ Insufficient balance! Total Cost: ${total_price:.2f}, Balance:${user_balance:.2f}", reply_markup=get_purchase_type_keyboard())
+            cursor.close()
             conn.close()
             return
 
         update_balance(user.id, -total_price)
-        item_ids = [item[0] for item in items]
+        item_ids = tuple([item[0] for item in items])
         item_details = "\n".join([f"- `{item[1]}`" for item in items])
 
-        cursor.executemany("DELETE FROM stock WHERE id = ?", [(i,) for i in item_ids])
+        cursor.execute("DELETE FROM stock WHERE id IN %s", (item_ids,))
         conn.commit()
+        cursor.close()
         conn.close()
 
         await update.message.reply_text(f"🎉 **Bulk Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔢 Items: {count}\n💰 Total Cost: `${total_price:.2f}`\n\n🔑 **Details:**\n{item_details}", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
@@ -451,7 +462,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated with @Fbotphere support handle...")
+    print("Bot updated with PostgreSQL support...")
     application.run_polling()
 
 if __name__ == "__main__":
