@@ -172,10 +172,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        
         for line in lines:
             cursor.execute("INSERT INTO stock (item_type, item_data, price) VALUES (%s, %s, %s)", (item_type, line, price))
-            
         conn.commit()
         cursor.close()
         conn.close()
@@ -329,19 +327,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_step = context.user_data.get("step")
 
+    # 1. Handle Cancel / Back
     if text in ["❌ Cancel", "🔙 Back"]:
         if user_step == "waiting_for_bulk_qty":
             context.user_data["step"] = "purchase_type"
             platform = context.user_data.get("selected_platform", "whatsapp")
             platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
             count, price = get_stock_info(platform)
-            msg_text = (
-                f"📱 **{platform_title}**\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 Stock: {count} numbers\n"
-                f"💰 Price: {price:.2f} USDT per number\n\n"
-                "Choose an option:"
-            )
             await update.message.reply_text("🔙 Action cancelled.", reply_markup=get_purchase_type_keyboard())
             return
         elif user_step == "purchase_type":
@@ -353,6 +345,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
             return
 
+    # 2. Handle Bulk Quantity Input
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
@@ -427,31 +420,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
-    if text == "🛒 Buy Number":
-        context.user_data["step"] = "category"
-        await show_buy_menu(update)
-
-    elif text in ["📱 WhatsApp", "✈️ Telegram"]:
-        platform = "whatsapp" if "WhatsApp" in text else "telegram"
-        platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
-        
-        context.user_data["selected_platform"] = platform
-        context.user_data["step"] = "purchase_type"
-
-        count, price = get_stock_info(platform)
-
-        msg_text = (
-            f"📱 **{platform_title}**\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
-            f"📦 **Stock:** {count} numbers\n"
-            f"💰 **Price:** {price:.2f} USDT per number\n\n"
-            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না।\n"
-            "Choose an option:"
-        )
-        await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
-
-    elif text == "1️⃣ Single Purchase":
+    # 3. Handle Single Purchase
+    if text == "1️⃣ Single Purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -475,7 +445,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         update_balance(user.id, -price)
         cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
-        
         cursor.execute(
             "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
             (user.id, platform, item_data, price)
@@ -484,9 +453,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.close()
         conn.close()
 
-        await update.message.reply_text(f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔑 Details:\n`{item_data}`", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
+        await update.message.reply_text(
+            f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔑 Details:\n`{item_data}`",
+            reply_markup=get_purchase_type_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
 
-    elif text == "📦 Bulk purchase":
+    # 4. Handle Bulk Purchase Button Click
+    if text == "📦 Bulk purchase":
         context.user_data["step"] = "waiting_for_bulk_qty"
         platform = context.user_data.get("selected_platform", "whatsapp")
         platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
@@ -508,6 +483,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         cancel_keyboard = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
         await update.message.reply_text(bulk_prompt, parse_mode="Markdown", reply_markup=cancel_keyboard)
+        return
+
+    # 5. Menu Navigation
+    if text == "🛒 Buy Number":
+        context.user_data["step"] = "category"
+        await show_buy_menu(update)
+
+    elif text in ["📱 WhatsApp", "✈️ Telegram"]:
+        platform = "whatsapp" if "WhatsApp" in text else "telegram"
+        platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
+        
+        context.user_data["selected_platform"] = platform
+        context.user_data["step"] = "purchase_type"
+
+        count, price = get_stock_info(platform)
+
+        msg_text = (
+            f"📱 **{platform_title}**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
+            f"📦 **Stock:** {count} numbers\n"
+            f"💰 **Price:** {price:.2f} USDT per number\n\n"
+            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না।\n"
+            "Choose an option:"
+        )
+        await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
 
     elif text == "💳 Deposit":
         keyboard = [
@@ -617,7 +618,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot fully fixed for database bulk delete and smooth purchase...")
+    print("Bot fully fixed with clean purchase execution flow...")
     application.run_polling()
 
 if __name__ == "__main__":
