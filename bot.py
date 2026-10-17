@@ -302,7 +302,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📞 **Customer Support & Help Desk**\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "Kono somossa hole ba deposit related query thakle amader support team er sathe যোগাযোগ করুন:\n\n"
-            "👤 Admin Support: @AdminUsername\n"
+            "👤 Admin Support: https://t.me/Fbotphere\n"
             "📢 Update Channel: @TGNumberUpdate\n\n"
             "⚠️ *Note: Send money korar por oboshsoi Admin ke Transaction ID o User ID diye notify korben.*"
         )
