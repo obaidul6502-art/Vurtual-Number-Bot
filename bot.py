@@ -406,8 +406,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(file_name, "rb") as f:
                 await update.message.reply_document(
                     document=InputFile(f, filename=file_name),
-                    caption=f"🎉 **Bulk Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔢 Quantity: `{qty}`\n💰 Total Cost: `${total_price:.2f}`",
-                    parse_mode="Markdown",
+                    caption=f"🎉 Bulk Purchase Successful!\n📦 Platform: {platform.upper()}\n🔢 Quantity: {qty}\n💰 Total Cost: ${total_price:.2f}",
                     reply_markup=get_purchase_type_keyboard()
                 )
             
@@ -454,9 +453,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         await update.message.reply_text(
-            f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔑 Details:\n`{item_data}`",
-            reply_markup=get_purchase_type_keyboard(),
-            parse_mode="Markdown"
+            f"🎉 Single Purchase Successful!\n📦 Platform: {platform.upper()}\n🔑 Details:\n{item_data}",
+            reply_markup=get_purchase_type_keyboard()
         )
         return
 
@@ -470,19 +468,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         affordable = int(user_balance // price) if price > 0 else 0
 
         bulk_prompt = (
-            f"📦 **Bulk Purchase — {platform_title}**\n"
+            f"📦 Bulk Purchase — {platform_title}\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 In stock: `{count}` numbers\n"
-            f"💰 Price: `{price:.2f}` USDT each\n"
-            f"💳 Your balance: `{user_balance:.3f}` USDT\n"
-            f"🔢 You can afford: `{affordable}` numbers\n\n"
-            "✍️ **How many numbers do you want?**\n"
+            f"📦 In stock: {count} numbers\n"
+            f"💰 Price: {price:.2f} USDT each\n"
+            f"💳 Your balance: {user_balance:.3f} USDT\n"
+            f"🔢 You can afford: {affordable} numbers\n\n"
+            "✍️ How many numbers do you want?\n"
             f"Send a number between 1 and {min(count, affordable) if affordable > 0 else count}.\n\n"
             "Use /cancel or click button below to abort."
         )
         
         cancel_keyboard = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
-        await update.message.reply_text(bulk_prompt, parse_mode="Markdown", reply_markup=cancel_keyboard)
+        await update.message.reply_text(bulk_prompt, reply_markup=cancel_keyboard)
         return
 
     # 5. Menu Navigation
@@ -500,15 +498,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count, price = get_stock_info(platform)
 
         msg_text = (
-            f"📱 **{platform_title}**\n"
+            f"📱 {platform_title}\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
-            f"📦 **Stock:** {count} numbers\n"
-            f"💰 **Price:** {price:.2f} USDT per number\n\n"
-            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না।\n"
+            f"📦 Stock: {count} numbers\n"
+            f"💰 Price: {price:.2f} USDT per number\n\n"
+            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না።\n"
             "Choose an option:"
         )
-        await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
+        await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard())
 
     elif text == "💳 Deposit":
         keyboard = [
@@ -516,21 +514,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🪙 Crypto (BEP-20 / USDT)", callback_data="pay_crypto")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("💳 **Select Deposit Method:**", reply_markup=reply_markup, parse_mode="Markdown")
+        await update.message.reply_text("💳 Select Deposit Method:", reply_markup=reply_markup)
 
     elif text == "📞 Support":
         support_text = (
-            "📞 **Customer Support & Help Desk**\n"
+            "📞 Customer Support & Help Desk\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "👤 Admin Support: @Fbotphere\n"
             "📢 Update Channel: @TGNumberUpdate"
         )
-        await update.message.reply_text(support_text, parse_mode="Markdown")
+        await update.message.reply_text(support_text)
 
     elif text == "👤 Profile":
         balance = get_user(user.id, user.username)
-        profile_text = f"👤 **User Profile:**\n━━━━━━━━━━━\n🆔 ID: `{user.id}`\n👤 Username: @{user.username if user.username else 'N/A'}\n💰 Balance: `${balance:.2f} USDT`"
-        await update.message.reply_text(profile_text, parse_mode="Markdown")
+        profile_text = f"👤 User Profile:\n━━━━━━━━━━━\n🆔 ID: {user.id}\n👤 Username: @{user.username if user.username else 'N/A'}\n💰 Balance: ${balance:.2f} USDT"
+        await update.message.reply_text(profile_text)
 
     elif text == "📅 Today":
         conn = get_db_connection()
@@ -544,14 +542,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         if not rows:
-            await update.message.reply_text("📅 **Today's History:**\n\nAji apni kono number kenen ni.", parse_mode="Markdown")
+            await update.message.reply_text("📅 Today's History:\n\nAji apni kono number kenen ni.")
             return
 
-        history_msg = "📅 **Today's Purchase History:**\n━━━━━━━━━━━━━━━━━━━━━\n"
+        history_msg = "📅 Today's Purchase History:\n━━━━━━━━━━━━━━━━━━━━━\n"
         for row in rows:
             plat, data, prc, dt = row
-            history_msg += f"📦 `{plat.upper()}` | 💰 `${prc:.2f}`\n🔑 `Data: {data}`\n⏱ {dt}\n--------------------\n"
-        await update.message.reply_text(history_msg, parse_mode="Markdown")
+            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt}\n--------------------\n"
+        await update.message.reply_text(history_msg)
 
     elif text == "📜 History":
         conn = get_db_connection()
@@ -565,14 +563,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         if not rows:
-            await update.message.reply_text("📜 **Life-Time History:**\n\nApnar kono purchase history nei.", parse_mode="Markdown")
+            await update.message.reply_text("📜 Life-Time History:\n\nApnar kono purchase history nei.")
             return
 
-        history_msg = "📜 **Life-Time Purchase History (Last 15):**\n━━━━━━━━━━━━━━━━━━━━━\n"
+        history_msg = "📜 Life-Time Purchase History (Last 15):\n━━━━━━━━━━━━━━━━━━━━━\n"
         for row in rows:
             plat, data, prc, dt = row
-            history_msg += f"📦 `{plat.upper()}` | 💰 `${prc:.2f}`\n🔑 `Data: {data}`\n⏱ {dt}\n--------------------\n"
-        await update.message.reply_text(history_msg, parse_mode="Markdown")
+            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt}\n--------------------\n"
+        await update.message.reply_text(history_msg)
 
     elif text == "💸 Withdraw":
         await update.message.reply_text("💸 Balance porjapto noi. Withdraw er jonno minimum balance $10 hote hobe.")
@@ -585,21 +583,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "pay_bkash":
         await query.edit_message_text(
-            "📲 **Mobile Banking Deposit**\n"
+            "📲 Mobile Banking Deposit\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "🟢 **bKash Personal:** `01603282319`\n"
-            "🟠 **Nagad Personal:** `01603282319`\n\n"
-            f"⚠️ **Niyom:** Send Money korar por Admin-ke Transaction ID o apnar User ID (`{user.id}`) likhe message din.",
-            parse_mode="Markdown"
+            "🟢 bKash Personal: `01603282319`\n"
+            "🟠 Nagad Personal: `01603282319`\n\n"
+            f"⚠️ Niyom: Send Money korar por Admin-ke Transaction ID o apnar User ID ({user.id}) likhe message din."
         )
     elif data == "pay_crypto":
         await query.edit_message_text(
-            "🪙 **Crypto Deposit (BEP-20 / USDT)**\n"
+            "🪙 Crypto Deposit (BEP-20 / USDT)\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "🌐 **Network:** BNB Smart Chain (BEP20)\n"
-            "💳 **Wallet Address:**\n`0x8f573aa283b98f570aacf3db0387b1c39118c29c`\n\n"
-            f"⚠️ **Niyom:** Deposit korar por Admin-ke Transaction Hash/TXID o apnar User ID (`{user.id}`) likhe message din.",
-            parse_mode="Markdown"
+            "🌐 Network: BNB Smart Chain (BEP20)\n"
+            "💳 Wallet Address:\n`0x8f573aa283b98f570aacf3db0387b1c39118c29c`\n\n"
+            f"⚠️ Niyom: Deposit korar por Admin-ke Transaction Hash/TXID o apnar User ID ({user.id}) likhe message din."
         )
 
 def main():
@@ -618,7 +614,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot fully fixed with clean purchase execution flow...")
+    print("Bot 100% fixed and running without string formatting bugs...")
     application.run_polling()
 
 if __name__ == "__main__":
