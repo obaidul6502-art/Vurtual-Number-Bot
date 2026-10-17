@@ -1,8 +1,21 @@
 import os
 import sqlite3
 import logging
+from threading import Thread
+from flask import Flask
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+
+# Render Free Web Service Dummy Server Setup
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running live!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -205,6 +218,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"🪙 Send USDT to `TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` and notify Admin with User ID (`{query.from_user.id}`).")
 
 def main():
+    # Start Dummy Web Server in Background Thread
+    server_thread = Thread(target=run_flask)
+    server_thread.daemon = True
+    server_thread.start()
+
     application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
