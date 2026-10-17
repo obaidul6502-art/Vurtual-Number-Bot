@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from threading import Thread
 from flask import Flask
-from telegram import Update, BotCommand, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, BotCommand, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 app = Flask(__name__)
@@ -50,7 +50,6 @@ def init_db():
             price REAL
         )
     """)
-    # History table for tracking purchases with dates
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS history (
             id SERIAL PRIMARY KEY,
@@ -110,7 +109,7 @@ def get_stock_info(item_type):
     price = row[1] if row and row[1] is not None else 0.0
     return count, price
 
-# --- STOCK ADD WITH NOTIFICATION TO ALL USERS ---
+# --- STOCK ADD WITH NOTIFICATION ---
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -131,7 +130,6 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ Added {item_type}!\nPrice: ${price}\nData: `{item_data}`", parse_mode="Markdown")
 
-        # Broadcast notification to all users about new stock
         users = get_all_users()
         for uid in users:
             try:
@@ -142,7 +140,6 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception:
                 pass
-
     except Exception:
         await update.message.reply_text("❌ Format: `/add whatsapp 0.09 +8801700000000`", parse_mode="Markdown")
 
@@ -185,7 +182,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"🎉 Bulk Import Success!\n📦 Category: `{item_type}`\n🔢 Total Added: `{len(lines)}`", parse_mode="Markdown")
 
-        # Broadcast bulk stock alert
         users = get_all_users()
         for uid in users:
             try:
@@ -220,7 +216,6 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user.")
-
     except Exception:
         await update.message.reply_text("❌ Format: `/addbal USER_ID AMOUNT`", parse_mode="Markdown")
 
@@ -258,7 +253,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = get_all_users()
     success = 0
     failed = 0
-
     status_msg = await update.message.reply_text(f"⏳ Broadcasting to {len(users)} users...")
 
     for uid in users:
@@ -270,7 +264,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await status_msg.edit_text(f"✅ **Broadcast Completed!**\n\nSuccessful: {success}\nFailed: {failed}")
 
-# --- UPDATED KEYBOARDS WITH 'TODAY' AND 'HISTORY' ---
 def get_main_keyboard():
     keyboard = [
         ["🛒 Buy Number"],
@@ -303,7 +296,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     if MAINTENANCE_MODE and user.id != ADMIN_ID:
-        await update.message.reply_text("🛠 **Bot is under Maintenance!**\n\nAmra bot-e notun update ba fix korchi. Khub shighroi bot abar chalu hobe.")
+        await update.message.reply_text("🛠 **Bot is under Maintenance!** Please wait.")
         return
 
     get_user(user.id, user.username)
@@ -334,6 +327,79 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text
+    user_step = context.user_data.get("step")
+
+    # Handle Custom Bulk Quantity Input
+    if user_step == "waiting_for_bulk_qty":
+        try:
+            qty = int(text)
+            if qty <= 0:
+                await update.message.reply_text("❌ Porjapto quantity din (minimum 1).")
+                return
+            
+            platform = context.user_data.get("selected_platform", "whatsapp")
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = %s LIMIT %s", (platform, qty))
+            items = cursor.fetchall()
+
+            if len(items) < qty:
+                await update.message.reply_text(f"❌ Stock-e eto number nei! Available stock: `{len(items)}`", parse_mode="Markdown", reply_markup=get_purchase_type_keyboard())
+                cursor.close()
+                conn.close()
+                context.user_data["step"] = "purchase_type"
+                return
+
+            total_price = sum([item[2] for item in items])
+            user_balance = get_user(user.id, user.username)
+
+            if user_balance < total_price:
+                await update.message.reply_text(f"⚠️ Insufficient balance!\nRequired: `${total_price:.2f}`, Your Balance: `${user_balance:.2f}`", parse_mode="Markdown", reply_markup=get_purchase_type_keyboard())
+                cursor.close()
+                conn.close()
+                context.user_data["step"] = "purchase_type"
+                return
+
+            update_balance(user.id, -total_price)
+            item_ids = [item[0] for item in items]
+            item_texts = [item[1] for item in items]
+            price_per_item = items[0][2]
+
+            # Delete from stock
+            cursor.execute("DELETE FROM stock WHERE id = ANY(%s)", (item_ids,))
+
+            # Save to history
+            for item in items:
+                cursor.execute(
+                    "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
+                    (user.id, platform, item[1], item[2])
+                )
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            # Create .txt file with purchased numbers
+            file_content = "\n".join(item_texts)
+            file_name = f"{platform}_numbers_{qty}.txt"
+            with open(file_name, "w", encoding="utf-8") as f:
+                f.write(file_content)
+
+            # Send .txt file to user
+            with open(file_name, "rb") as f:
+                await update.message.reply_document(
+                    document=InputFile(f, filename=file_name),
+                    caption=f"🎉 **Bulk Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔢 Quantity: `{qty}`\n💰 Total Cost: `${total_price:.2f}`",
+                    parse_mode="Markdown",
+                    reply_markup=get_purchase_type_keyboard()
+                )
+            
+            os.remove(file_name)
+            context.user_data["step"] = "purchase_type"
+            return
+
+        except ValueError:
+            await update.message.reply_text("❌ D مہربانی করে সঠিক সংখ্যা (Number) টাইপ করুন (jemon: `10`, `50`, `200`):")
+            return
 
     if text == "🛒 Buy Number":
         context.user_data["step"] = "category"
@@ -353,8 +419,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "━━━━━━━━━━━━━━━━━━━━━\n"
             f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
             f"📦 **Stock:** {count} numbers\n"
-            f"💰 **Price:** {price:.2f} USDT per number ⭐ *your special rate*\n\n"
-            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না።\n"
+            f"💰 **Price:** {price:.2f} USDT per number\n\n"
             "Choose an option:"
         )
         await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
@@ -384,7 +449,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_balance(user.id, -price)
         cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
         
-        # Save to History
         cursor.execute(
             "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
             (user.id, platform, item_data, price)
@@ -396,47 +460,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔑 Details: `{item_data}`", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
 
     elif text == "📦 Bulk purchase":
-        platform = context.user_data.get("selected_platform", "whatsapp")
-        count = 5  
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, item_data, price FROM stock WHERE item_type = %s LIMIT %s", (platform, count))
-        items = cursor.fetchall()
-
-        if len(items) < count:
-            await update.message.reply_text(f"❌ Not enough stock! Available: {len(items)}, Required: {count}", reply_markup=get_purchase_type_keyboard())
-            cursor.close()
-            conn.close()
-            return
-
-        token_prices = [item[2] for item in items]
-        total_price = sum(token_prices)
-        user_balance = get_user(user.id, user.username)
-
-        if user_balance < total_price:
-            await update.message.reply_text(f"⚠️ Insufficient balance! Total Cost: ${total_price:.2f}, Balance:${user_balance:.2f}", reply_markup=get_purchase_type_keyboard())
-            cursor.close()
-            conn.close()
-            return
-
-        update_balance(user.id, -total_price)
-        item_ids = tuple([item[0] for item in items])
-        item_details = "\n".join([f"- `{item[1]}`" for item in items])
-
-        cursor.execute("DELETE FROM stock WHERE id IN %s", (item_ids,))
-        
-        # Save all items to history
-        for item in items:
-            cursor.execute(
-                "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
-                (user.id, platform, item[1], item[2])
-            )
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        await update.message.reply_text(f"🎉 **Bulk Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔢 Items: {count}\n💰 Total Cost: `${total_price:.2f}`\n\n🔑 **Details:**\n{item_details}", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
+        context.user_data["step"] = "waiting_for_bulk_qty"
+        count, price = get_stock_info(context.user_data.get("selected_platform", "whatsapp"))
+        await update.message.reply_text(
+            f"📦 **Bulk Purchase**\n\nApni koto gulo number kinte chan? (Available stock: `{count}`)\n\n👉 Ekhan e **quantity** type kore pathan (jemon: `10`, `50`, `200`):",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        )
 
     elif text == "💳 Deposit":
         keyboard = [
@@ -444,16 +474,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🪙 Crypto (BEP-20 / USDT)", callback_data="pay_crypto")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("💳 **Select Deposit Method:**\n\nNicher method theke apnar convenient payment method select karun:", reply_markup=reply_markup, parse_mode="Markdown")
+        await update.message.reply_text("💳 **Select Deposit Method:**", reply_markup=reply_markup, parse_mode="Markdown")
 
     elif text == "📞 Support":
         support_text = (
             "📞 **Customer Support & Help Desk**\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "Kono somossa hole ba deposit related query thakle amader support team er sathe jogajog korun:\n\n"
             "👤 Admin Support: @Fbotphere\n"
-            "📢 Update Channel: @TGNumberUpdate\n\n"
-            "⚠️ *Note: Send money korar por oboshsoi Admin ke Transaction ID o User ID diye notify korben.*"
+            "📢 Update Channel: @TGNumberUpdate"
         )
         await update.message.reply_text(support_text, parse_mode="Markdown")
 
@@ -465,7 +493,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📅 Today":
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Query purchases made today (UTC / Server date)
         cursor.execute(
             "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND DATE(purchase_date) = CURRENT_DATE ORDER BY purchase_date DESC",
             (user.id,)
@@ -482,7 +509,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for row in rows:
             plat, data, prc, dt = row
             history_msg += f"📦 `{plat.upper()}` | 💰 `${prc:.2f}`\n🔑 `Data: {data}`\n⏱ {dt}\n--------------------\n"
-        
         await update.message.reply_text(history_msg, parse_mode="Markdown")
 
     elif text == "📜 History":
@@ -504,7 +530,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for row in rows:
             plat, data, prc, dt = row
             history_msg += f"📦 `{plat.upper()}` | 💰 `${prc:.2f}`\n🔑 `Data: {data}`\n⏱ {dt}\n--------------------\n"
-        
         await update.message.reply_text(history_msg, parse_mode="Markdown")
 
     elif text == "💸 Withdraw":
@@ -512,7 +537,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "🔙 Back":
         current_step = context.user_data.get("step")
-        if current_step == "purchase_type":
+        if current_step in ["purchase_type", "waiting_for_bulk_qty"]:
             context.user_data["step"] = "category"
             await show_buy_menu(update)
         else:
@@ -560,7 +585,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated with stock alerts & purchase histories...")
+    print("Bot updated with custom bulk quantity TXT file delivery...")
     application.run_polling()
 
 if __name__ == "__main__":
