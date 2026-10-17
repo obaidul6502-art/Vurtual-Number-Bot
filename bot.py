@@ -157,8 +157,8 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_main_keyboard():
     keyboard = [
         ["🛒 Buy Number"],
-        ["💰 Deposit", "👤 Profile"],
-        ["💸 Withdraw"]
+        ["💳 Deposit", "📞 Support"],
+        ["👤 Profile", "💸 Withdraw"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -270,7 +270,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             return
 
-        total_price = sum(item[2] for item in items)
+        token_prices = [item[2] for item in items]
+        total_price = sum(token_prices)
         user_balance = get_user(user.id, user.username)
 
         if user_balance < total_price:
@@ -288,6 +289,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"🎉 **Bulk Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔢 Items: {count}\n💰 Total Cost: `${total_price:.2f}`\n\n🔑 **Details:**\n{item_details}", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
 
+    elif text == "💳 Deposit":
+        keyboard = [
+            [InlineKeyboardButton("💳 bKash / Nagad / Rocket", callback_data="pay_bkash")],
+            [InlineKeyboardButton("🪙 Crypto (USDT / TRC20)", callback_data="pay_crypto")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("💳 **Select Deposit Method:**\n\nNicher method theke apnar convenient payment method select karun:", reply_markup=reply_markup, parse_mode="Markdown")
+
+    elif text == "📞 Support":
+        support_text = (
+            "📞 **Customer Support & Help Desk**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "Kono somossa hole ba deposit related query thakle amader support team er sathe যোগাযোগ করুন:\n\n"
+            "👤 Admin Support: @AdminUsername\n"
+            "📢 Update Channel: @TGNumberUpdate\n\n"
+            "⚠️ *Note: Send money korar por oboshsoi Admin ke Transaction ID o User ID diye notify korben.*"
+        )
+        await update.message.reply_text(support_text, parse_mode="Markdown")
+
+    elif text == "👤 Profile":
+        balance = get_user(user.id, user.username)
+        profile_text = f"👤 **User Profile:**\n━━━━━━━━━━━\n🆔 ID: `{user.id}`\n👤 Username: @{user.username if user.username else 'N/A'}\n💰 Balance: `${balance:.2f} USDT`"
+        await update.message.reply_text(profile_text, parse_mode="Markdown")
+
+    elif text == "💸 Withdraw":
+        await update.message.reply_text("💸 Balance porjapto noi. Withdraw er jonno minimum balance $10 hote hobe.")
+
     elif text == "🔙 Back":
         current_step = context.user_data.get("step")
         if current_step == "purchase_type":
@@ -297,22 +325,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
 
-    elif text == "👤 Profile":
-        balance = get_user(user.id, user.username)
-        profile_text = f"👤 **Profile:**\n🆔 ID: `{user.id}`\n💰 Balance: `${balance:.2f} USDT`"
-        await update.message.reply_text(profile_text, parse_mode="Markdown")
-
-    elif text == "💰 Deposit":
-        keyboard = [
-            [InlineKeyboardButton("bKash / Nagad", callback_data="pay_bkash")],
-            [InlineKeyboardButton("Crypto (USDT/TRC20)", callback_data="pay_crypto")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("💳 Deposit method select karun:", reply_markup=reply_markup)
-
-    elif text == "💸 Withdraw":
-        await update.message.reply_text("💸 Balance porjapto noi.")
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -320,9 +332,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "pay_bkash":
-        await query.edit_message_text(f"📲 Send Money to `017XXXXXXXX` and notify Admin with User ID (`{user.id}`).", parse_mode="Markdown")
+        await query.edit_message_text(
+            "📲 **Mobile Banking Deposit (bKash / Nagad)**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "Send Money to: `017XXXXXXXX` (Personal)\n\n"
+            f"Tarpor Taka pathiye Admin ke Transaction ID o apnar User ID (`{user.id}`) diye message din.",
+            parse_mode="Markdown"
+        )
     elif data == "pay_crypto":
-        await query.edit_message_text(f"🪙 Send USDT to `TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` and notify Admin with User ID (`{user.id}`).", parse_mode="Markdown")
+        await query.edit_message_text(
+            "🪙 **Crypto Deposit (USDT - TRC20)**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "Wallet Address:\n`TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX`\n\n"
+            f"Deposit kore Hash/TXID ebong apnar User ID (`{user.id}`) Admin ke den.",
+            parse_mode="Markdown"
+        )
 
 def main():
     server_thread = Thread(target=run_flask)
@@ -338,7 +362,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated matching screenshot keyboard layout...")
+    print("Bot with Deposit, Support and Purchase buttons running...")
     application.run_polling()
 
 if __name__ == "__main__":
