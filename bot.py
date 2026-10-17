@@ -329,12 +329,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_step = context.user_data.get("step")
 
-    # Handle Custom Bulk Quantity Input
+    # Handle Back button globally for steps
+    if text == "🔙 Back":
+        if user_step in ["purchase_type", "waiting_for_bulk_qty"]:
+            context.user_data["step"] = "category"
+            await show_buy_menu(update)
+            return
+        elif user_step == "category":
+            context.user_data.clear()
+            await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
+            return
+        else:
+            context.user_data.clear()
+            await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
+            return
+
+    # Handle Custom Bulk Quantity Input (Any random number entered by user)
     if user_step == "waiting_for_bulk_qty":
         try:
-            qty = int(text)
+            # Clean text to extract any number if user types something like "30" or "30 pcs"
+            import re
+            numbers_found = re.findall(r'\d+', text)
+            if not numbers_found:
+                await update.message.reply_text("❌ D مہربانی করে সঠিক সংখ্যা (Number) টাইপ করুন (jemon: `10`, `50`, `200`):", parse_mode="Markdown")
+                return
+            
+            qty = int(numbers_found[0])
             if qty <= 0:
-                await update.message.reply_text("❌ Porjapto quantity din (minimum 1).")
+                await update.message.reply_text("❌ Porjapto quantity দিন (minimum 1).")
                 return
             
             platform = context.user_data.get("selected_platform", "whatsapp")
@@ -363,9 +385,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_balance(user.id, -total_price)
             item_ids = [item[0] for item in items]
             item_texts = [item[1] for item in items]
-            price_per_item = items[0][2]
 
-            # Delete from stock
+            # Delete from stock securely using tuple/list
             cursor.execute("DELETE FROM stock WHERE id = ANY(%s)", (item_ids,))
 
             # Save to history
@@ -397,8 +418,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
-        except ValueError:
-            await update.message.reply_text("❌ D مہربانی করে সঠিক সংখ্যা (Number) টাইপ করুন (jemon: `10`, `50`, `200`):")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {str(e)}")
             return
 
     if text == "🛒 Buy Number":
@@ -463,7 +484,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["step"] = "waiting_for_bulk_qty"
         count, price = get_stock_info(context.user_data.get("selected_platform", "whatsapp"))
         await update.message.reply_text(
-            f"📦 **Bulk Purchase**\n\nApni koto gulo number kinte chan? (Available stock: `{count}`)\n\n👉 Ekhan e **quantity** type kore pathan (jemon: `10`, `50`, `200`):",
+            f"📦 **Bulk Purchase**\n\nApni koto gulo number kinte chan? (Available stock: `{count}`)\n\n👉 Ekhan e joto gulo iccha **quantity** type kore ba random shongkha pathan (jemon: `15`, `50`, `200`):",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
         )
@@ -535,15 +556,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "💸 Withdraw":
         await update.message.reply_text("💸 Balance porjapto noi. Withdraw er jonno minimum balance $10 hote hobe.")
 
-    elif text == "🔙 Back":
-        current_step = context.user_data.get("step")
-        if current_step in ["purchase_type", "waiting_for_bulk_qty"]:
-            context.user_data["step"] = "category"
-            await show_buy_menu(update)
-        else:
-            context.user_data.clear()
-            await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -585,7 +597,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated with custom bulk quantity TXT file delivery...")
+    print("Bot updated with robust random bulk quantity and purchase fixes...")
     application.run_polling()
 
 if __name__ == "__main__":
