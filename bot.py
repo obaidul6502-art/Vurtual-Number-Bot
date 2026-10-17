@@ -1,6 +1,7 @@
 import os
 import psycopg2
 import logging
+import re
 from datetime import datetime
 from threading import Thread
 from flask import Flask
@@ -329,29 +330,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_step = context.user_data.get("step")
 
-    # Handle Back button globally for steps
-    if text == "🔙 Back":
-        if user_step in ["purchase_type", "waiting_for_bulk_qty"]:
-            context.user_data["step"] = "category"
-            await show_buy_menu(update)
-            return
-        elif user_step == "category":
-            context.user_data.clear()
-            await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
-            return
-        else:
-            context.user_data.clear()
-            await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
-            return
+    # Handle Cancel or Back
+    if text in ["❌ Cancel", "🔙 Back"]:
+        context.user_data["step"] = "purchase_type"
+        platform = context.user_data.get("selected_platform", "whatsapp")
+        platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
+        count, price = get_stock_info(platform)
+        
+        msg_text = (
+            f"📦 **Bulk Purchase — {platform_title}**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 In stock: `{count}` numbers\n"
+            f"💰 Price: `{price:.2f}` USDT each\n"
+            f"💳 Your balance: `{get_user(user.id, user.username):.3f}` USDT\n"
+            f"🔢 You can afford: `{(int(get_user(user.id, user.username) // price) if price > 0 else 0)}` numbers\n\n"
+            "Choose an option:"
+        )
+        await update.message.reply_text("🔙 Action cancelled.", reply_markup=get_purchase_type_keyboard())
+        return
 
-    # Handle Custom Bulk Quantity Input (Any random number entered by user)
+    # Handle Custom Bulk Quantity Input (Smart Number Extractor)
     if user_step == "waiting_for_bulk_qty":
         try:
-            # Clean text to extract any number if user types something like "30" or "30 pcs"
-            import re
             numbers_found = re.findall(r'\d+', text)
             if not numbers_found:
-                await update.message.reply_text("❌ D مہربانی করে সঠিক সংখ্যা (Number) টাইপ করুন (jemon: `10`, `50`, `200`):", parse_mode="Markdown")
+                await update.message.reply_text("❌ দয়া করে সঠিক সংখ্যা (Number) টাইপ করুন (jemon: `10`, `50`, `200`):", parse_mode="Markdown")
                 return
             
             qty = int(numbers_found[0])
@@ -386,7 +389,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             item_ids = [item[0] for item in items]
             item_texts = [item[1] for item in items]
 
-            # Delete from stock securely using tuple/list
+            # Secure delete from PostgreSQL
             cursor.execute("DELETE FROM stock WHERE id = ANY(%s)", (item_ids,))
 
             # Save to history
@@ -401,11 +404,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Create .txt file with purchased numbers
             file_content = "\n".join(item_texts)
-            file_name = f"{platform}_numbers_{qty}.txt"
+            file_name = f"{platform.upper()}_BULK_{user.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             with open(file_name, "w", encoding="utf-8") as f:
                 f.write(file_content)
 
-            # Send .txt file to user
+            # Send .txt file to user with professional look matching image
             with open(file_name, "rb") as f:
                 await update.message.reply_document(
                     document=InputFile(f, filename=file_name),
@@ -441,6 +444,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
             f"📦 **Stock:** {count} numbers\n"
             f"💰 **Price:** {price:.2f} USDT per number\n\n"
+            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না।\n"
             "Choose an option:"
         )
         await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
@@ -478,16 +482,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.close()
         conn.close()
 
-        await update.message.reply_text(f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔑 Details: `{item_data}`", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
+        await update.message.reply_text(f"🎉 **Single Purchase Successful!**\n📦 Platform: `{platform.upper()}`\n🔑 Details:\n`{item_data}`", reply_markup=get_purchase_type_keyboard(), parse_mode="Markdown")
 
     elif text == "📦 Bulk purchase":
         context.user_data["step"] = "waiting_for_bulk_qty"
-        count, price = get_stock_info(context.user_data.get("selected_platform", "whatsapp"))
-        await update.message.reply_text(
-            f"📦 **Bulk Purchase**\n\nApni koto gulo number kinte chan? (Available stock: `{count}`)\n\n👉 Ekhan e joto gulo iccha **quantity** type kore ba random shongkha pathan (jemon: `15`, `50`, `200`):",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup([["🔙 Back"]], resize_keyboard=True)
+        platform = context.user_data.get("selected_platform", "whatsapp")
+        platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
+        count, price = get_stock_info(platform)
+        user_balance = get_user(user.id, user.username)
+        affordable = int(user_balance // price) if price > 0 else 0
+
+        bulk_prompt = (
+            f"📦 **Bulk Purchase — {platform_title}**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 In stock: `{count}` numbers\n"
+            f"💰 Price: `{price:.2f}` USDT each\n"
+            f"💳 Your balance: `{user_balance:.3f}` USDT\n"
+            f"🔢 You can afford: `{affordable}` numbers\n\n"
+            "✍️ **How many numbers do you want?**\n"
+            f"Send a number between 1 and {min(count, affordable) if affordable > 0 else count}.\n\n"
+            "Use /cancel or click button below to abort."
         )
+        
+        cancel_keyboard = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
+        await update.message.reply_text(bulk_prompt, parse_mode="Markdown", reply_markup=cancel_keyboard)
 
     elif text == "💳 Deposit":
         keyboard = [
@@ -568,7 +586,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "🟢 **bKash Personal:** `01603282319`\n"
             "🟠 **Nagad Personal:** `01603282319`\n\n"
-            f"⚠️ **Niyom:** Send Money korar por Admin-ke Transaction ID o apnar User ID (`{user.id}`) likhe message din.",
+            f"⚠️ **Niyom:** Send Money korار por Admin-ke Transaction ID o apnar User ID (`{user.id}`) likhe message din.",
             parse_mode="Markdown"
         )
     elif data == "pay_crypto":
@@ -577,7 +595,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "🌐 **Network:** BNB Smart Chain (BEP20)\n"
             "💳 **Wallet Address:**\n`0x8f573aa283b98f570aacf3db0387b1c39118c29c`\n\n"
-            f"⚠️ **Niyom:** Deposit korar por Admin-ke Transaction Hash/TXID o apnar User ID (`{user.id}`) likhe message din.",
+            f"⚠️ **Niyom:** Deposit korار por Admin-ke Transaction Hash/TXID o apnar User ID (`{user.id}`) likhe message din.",
             parse_mode="Markdown"
         )
 
@@ -597,7 +615,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated with robust random bulk quantity and purchase fixes...")
+    print("Bot updated with professional bulk purchase prompt & .txt delivery...")
     application.run_polling()
 
 if __name__ == "__main__":
