@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 TOKEN = "8624066909:AAEzSG-mMxGGZgXlffeMaJG-4NFNsoia0hI"
 ADMIN_ID = 6132325140  
 
+# Maintenance Mode Global Variable
+MAINTENANCE_MODE = False
+
 # --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect("bot_database.db")
@@ -68,6 +71,14 @@ def update_balance(user_id, amount):
     cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
     conn.commit()
     conn.close()
+
+def get_all_users():
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    return [u[0] for u in users]
 
 def get_stock_info(item_type):
     conn = sqlite3.connect("bot_database.db")
@@ -140,6 +151,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
+# --- BALANCE ADD WITH NOTIFICATION ---
 async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -148,10 +160,71 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         target_user_id = int(context.args[0])
         amount = float(context.args[1])
+        
         update_balance(target_user_id, amount)
-        await update.message.reply_text(f"✅ Added ${amount} to User ID: `{target_user_id}`", parse_mode="Markdown")
+        
+        # Admin confirmation
+        await update.message.reply_text(f"✅ Added `${amount}` to User ID: `{target_user_id}`", parse_mode="Markdown")
+        
+        # Member notification
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"🎉 **Deposit Successful!**\n\nAdmin apnar account-e **`${amount}`** add korechen. Ekhon apni number kinte paren!",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user (User might have blocked the bot).")
+
     except Exception:
         await update.message.reply_text("❌ Format: `/addbal USER_ID AMOUNT`", parse_mode="Markdown")
+
+# --- MAINTENANCE & BROADCAST COMMANDS ---
+async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global MAINTENANCE_MODE
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
+        return
+    
+    try:
+        status = context.args[0].lower()
+        if status == "on":
+            MAINTENANCE_MODE = True
+            await update.message.reply_text("⚠️ Bot is now in **Maintenance Mode**.", parse_mode="Markdown")
+        elif status == "off":
+            MAINTENANCE_MODE = False
+            await update.message.reply_text("✅ Bot is now **Live / Active**.", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Use: `/maintenance on` or `/maintenance off`", parse_mode="Markdown")
+    except Exception:
+        await update.message.reply_text(f"Current Maintenance Status: **{'ON' if MAINTENANCE_MODE else 'OFF'}**\nUse: `/maintenance on/off`", parse_mode="Markdown")
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
+        return
+    
+    message_text = " ".join(context.args)
+    if not message_text:
+        await update.message.reply_text("❌ Format: `/broadcast Your message here...`", parse_mode="Markdown")
+        return
+
+    users = get_all_users()
+    success = 0
+    failed = 0
+
+    status_msg = await update.message.reply_text(f"⏳ Broadcasting to {len(users)} users...")
+
+    for uid in users:
+        try:
+            await context.bot.send_message(chat_id=uid, text=f"📢 **Announcement / Update:**\n\n{message_text}", parse_mode="Markdown")
+            success += 1
+        except Exception:
+            failed += 1
+
+    await status_msg.edit_text(f"✅ **Broadcast Completed!**\n\nSuccessful: {success}\nFailed: {failed}")
 
 # --- USER MENUS ---
 def get_main_keyboard():
@@ -181,7 +254,13 @@ async def post_init(application):
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global MAINTENANCE_MODE
     user = update.effective_user
+
+    if MAINTENANCE_MODE and user.id != ADMIN_ID:
+        await update.message.reply_text("🛠 **Bot is under Maintenance!**\n\nAmra bot-e notun update ba fix korchi. Khub shighroi bot abar chalu hobe. Dhoirjo dhorar jonno dhonnobad!")
+        return
+
     get_user(user.id, user.username)
     context.user_data.clear()
 
@@ -202,8 +281,14 @@ async def show_buy_menu(update: Update):
     await update.message.reply_text(msg_text, reply_markup=get_platform_keyboard(), parse_mode="Markdown")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    global MAINTENANCE_MODE
     user = update.effective_user
+
+    if MAINTENANCE_MODE and user.id != ADMIN_ID:
+        await update.message.reply_text("🛠 **Bot is under Maintenance!** Please wait.")
+        return
+
+    text = update.message.text
 
     if text == "🛒 Buy Number":
         context.user_data["step"] = "category"
@@ -301,8 +386,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         support_text = (
             "📞 **Customer Support & Help Desk**\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "Kono somossa hole ba deposit related query thakle amader support team er sathe যোগাযোগ করুন:\n\n"
-            "👤 Admin Support: https://t.me/Fbotphere\n"
+            "Kono somossa hole ba deposit related query thakle amader support team er sathe jogajog korun:\n\n"
+            "👤 Admin Support: @Fbotphere\n"
             "📢 Update Channel: @TGNumberUpdate\n\n"
             "⚠️ *Note: Send money korar por oboshsoi Admin ke Transaction ID o User ID diye notify korben.*"
         )
@@ -360,11 +445,13 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("add", add_stock))
     application.add_handler(CommandHandler("addbal", add_bal))
+    application.add_handler(CommandHandler("maintenance", maintenance_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated with bKash, Nagad, and BEP20 address...")
+    print("Bot updated with @Fbotphere support handle...")
     application.run_polling()
 
 if __name__ == "__main__":
