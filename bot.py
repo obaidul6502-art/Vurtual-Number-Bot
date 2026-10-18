@@ -214,6 +214,34 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("❌ Format: /addbal USER_ID AMOUNT")
 
+# --- ADMIN COMMAND TO SEE ALL USERS & BALANCES ---
+async def admin_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
+        return
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, username, balance FROM users")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("📁 Kono user nei database-e.")
+        return
+
+    msg = "👥 **All Registered Users & Balances:**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    for row in rows:
+        uid, uname, bal = row
+        msg += f"🆔 ID: `{uid}`\n👤 @{uname if uname else 'N/A'}\n💰 Balance: `${bal:.2f}`\n--------------------\n"
+    
+    if len(msg) > 4000:
+        msg = msg[:4000] + "\n... (list too long)"
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global MAINTENANCE_MODE
     user_id = update.effective_user.id
@@ -283,7 +311,10 @@ def get_purchase_type_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def post_init(application):
-    commands = [BotCommand("start", "🔄 Restart Bot / Show Menu")]
+    commands = [
+        BotCommand("start", "🔄 Restart Bot / Show Menu"),
+        BotCommand("users", "👥 View All Users & Balances (Admin)")
+    ]
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -324,7 +355,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_step = context.user_data.get("step")
 
-    # Back or Cancel
     if text in ["❌ Cancel", "🔙 Back"]:
         if user_step == "waiting_for_bulk_qty":
             context.user_data["step"] = "purchase_type"
@@ -339,7 +369,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
             return
 
-    # Bulk Quantity Input Handler
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
@@ -416,7 +445,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
-    # Single Purchase Handler
     if text == "1️⃣ Single Purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
         conn = get_db_connection()
@@ -457,7 +485,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Bulk Purchase Prompt
     if text == "📦 Bulk purchase":
         context.user_data["step"] = "waiting_for_bulk_qty"
         platform = context.user_data.get("selected_platform", "whatsapp")
@@ -482,7 +509,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(bulk_prompt, reply_markup=cancel_keyboard)
         return
 
-    # Menu Options
     if text == "🛒 Buy Number":
         context.user_data["step"] = "category"
         await show_buy_menu(update)
@@ -532,8 +558,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📅 Today":
         conn = get_db_connection()
         cursor = conn.cursor()
+        # Fixed Today query using TO_CHAR for accurate timezone comparison
         cursor.execute(
-            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND DATE(purchase_date) = CURRENT_DATE ORDER BY purchase_date DESC",
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND TO_CHAR(purchase_date, 'YYYY-MM-DD') = TO_CHAR(CURRENT_TIMESTAMP, 'YYYY-MM-DD') ORDER BY purchase_date DESC",
             (user.id,)
         )
         rows = cursor.fetchall()
@@ -605,6 +632,7 @@ def main():
     application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("users", admin_users_command)) # Notun admin command
     application.add_handler(CommandHandler("add", add_stock))
     application.add_handler(CommandHandler("addbal", add_bal))
     application.add_handler(CommandHandler("maintenance", maintenance_command))
@@ -613,7 +641,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot started cleanly without any SQL syntax mismatch...")
+    print("Bot started with fixed Today button and /users command...")
     application.run_polling()
 
 if __name__ == "__main__":
