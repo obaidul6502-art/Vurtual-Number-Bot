@@ -1,6 +1,6 @@
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timedelta
 from database import get_total_users_balance
 from config import UPDATE_CHANNEL
 
@@ -25,7 +25,10 @@ def generate_order_id():
 async def notify_channel_purchase(context, user_id, platform, qty, unit_price, number_sample):
     try:
         total_bot_bal = get_total_users_balance()
-        now_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+        # Bangladesh Local Time (UTC+6) fix
+        bd_time = datetime.utcnow() + timedelta(hours=6)
+        now_str = bd_time.strftime("%d-%m-%Y %I:%M:%S %p")
+        
         masked_uid = mask_user_id(user_id)
         masked_num = mask_number(number_sample)
         order_id = generate_order_id()
@@ -48,7 +51,9 @@ async def notify_channel_purchase(context, user_id, platform, qty, unit_price, n
 
 async def notify_channel_deposit(context, user_id, amount):
     try:
-        now_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+        bd_time = datetime.utcnow() + timedelta(hours=6)
+        now_str = bd_time.strftime("%d-%m-%Y %I:%M:%S %p")
+        
         masked_uid = mask_user_id(user_id)
         trx_id = "".join(random.choices(string.ascii_uppercase + string.digits, k=4)) + "C0xxxxx"
 
