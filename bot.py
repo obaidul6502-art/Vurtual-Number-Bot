@@ -2,6 +2,8 @@ import os
 import psycopg2
 import logging
 import re
+import random
+import string
 from datetime import datetime
 from threading import Thread
 from flask import Flask
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = "8624066909:AAEzSG-mMxGGZgXlffeMaJG-4NFNsoia0hI"
 ADMIN_ID = 6132325140  
-UPDATE_CHANNEL = "@TGnumbeupdate"  # Apnar channel username
+UPDATE_CHANNEL = "@TGnumbeupdate"  # Apnar update channel username
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 MAINTENANCE_MODE = False
@@ -111,34 +113,80 @@ def get_stock_info(item_type):
     price = row[1] if row and row[1] is not None else 0.0
     return count, price
 
-def get_bot_total_sales():
-    """Bot-er ekhon porjonto mot bikri/revenue hiseb korar jonno"""
+def get_total_users_balance():
+    """Shob user er total joma balance calculating function"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT SUM(price) FROM history")
+    cursor.execute("SELECT SUM(balance) FROM users")
     row = cursor.fetchone()
     cursor.close()
     conn.close()
-    return row[0] if row and row[0] is not None else 0.0
+    return float(row[0]) if row and row[0] is not None else 0.0
 
-async def notify_channel_purchase(context: ContextTypes.DEFAULT_TYPE, user_first_name, platform, qty, total_cost):
-    """Jokhon e keo kinbe, tokhon e eiti channel e post korbe"""
+def mask_user_id(uid):
+    s = str(uid)
+    if len(s) >= 6:
+        return f"{s[:3]}****{s[-3:]}"
+    return f"{s[:2]}****"
+
+def mask_number(num_str):
+    num = num_str.strip().split()[0]
+    if len(num) >= 7:
+        return f"{num[:4]}****{num[-4:]}"
+    return num
+
+def generate_order_id():
+    prefix = "".join(random.choices(string.digits, k=3))
+    mid = "".join(random.choices(string.ascii_letters + string.digits, k=5))
+    suffix = "".join(random.choices(string.ascii_letters + string.digits, k=10))
+    return f"{prefix}-*****{mid}S{suffix}"
+
+# --- CHANNEL NOTIFICATIONS MATCHING SCREENSHOT ---
+
+async def notify_channel_purchase(context: ContextTypes.DEFAULT_TYPE, user_id, platform, qty, unit_price, number_sample):
     try:
-        bot_total_sales = get_bot_total_sales()
-        channel_msg = (
-            "🎉 **New Successful Purchase!**\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 **Buyer:** {user_first_name}\n"
-            f"📦 **Platform:** `{platform.upper()}`\n"
-            f"🔢 **Quantity Purchased:** `{qty} pcs`\n"
-            f"💰 **Total Spent:** `${total_cost:.2f} USDT`\n\n"
-            f"📊 **Bot Total Sales:** `${bot_total_sales:.2f} USDT`\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "🚀 Buy virtual numbers instantly using our bot!"
+        total_bot_bal = get_total_users_balance()
+        now_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+        masked_uid = mask_user_id(user_id)
+        masked_num = mask_number(number_sample)
+        order_id = generate_order_id()
+
+        msg = (
+            "Order History\n"
+            "🎉 **New Purchase Successful!**\n\n"
+            f"✈️ **Platform:** {platform.title()} USA\n"
+            f"🆔 **User ID:** `{masked_uid}`\n"
+            f"📊 **Quantity:** {qty} pcs\n"
+            f"💵 **Price:** USDT {unit_price:.2f}\n"
+            f"📱 **Number:** `{masked_num}`\n"
+            f"🆔 **Order ID:** `{order_id}`\n"
+            f"💰 **Total Bot Balance:** USDT {total_bot_bal:,.2f}\n"
+            f"⏰ **Time:** {now_str}"
         )
-        await context.bot.send_message(chat_id=UPDATE_CHANNEL, text=channel_msg, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=UPDATE_CHANNEL, text=msg, parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Failed to send notification to channel: {str(e)}")
+        logger.error(f"Failed to post purchase notification: {str(e)}")
+
+async def notify_channel_deposit(context: ContextTypes.DEFAULT_TYPE, user_id, amount):
+    try:
+        now_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+        masked_uid = mask_user_id(user_id)
+        trx_id = "".join(random.choices(string.ascii_uppercase + string.digits, k=4)) + "C0xxxxx"
+
+        msg = (
+            "Order History\n"
+            "✅ **New Deposit Approved!**\n\n"
+            f"👤 **User:** `{masked_uid}`\n"
+            f"🔑 **TrxID:** `{trx_id}`\n"
+            f"💵 **Amount:** {amount:.1f} USDT\n"
+            f"📅 **Date:** {now_str}\n"
+            f"✅ **Status:** Completed"
+        )
+        await context.bot.send_message(chat_id=UPDATE_CHANNEL, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Failed to post deposit notification: {str(e)}")
+
+# --- ADMIN COMMANDS ---
 
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -241,6 +289,10 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user.")
+
+        # Post deposit alert to channel
+        await notify_channel_deposit(context, target_user_id, amount)
+
     except Exception:
         await update.message.reply_text("❌ Format: /addbal USER_ID AMOUNT")
 
@@ -398,6 +450,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
             return
 
+    # --- BULK PURCHASE LOGIC ---
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
@@ -437,6 +490,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_balance(user.id, -total_price)
             
             item_texts = []
+            unit_price = items[0][2] if items else 0.0
+            first_number = items[0][1] if items else ""
+
             for item in items:
                 stock_id = item[0]
                 item_data = str(item[1])
@@ -445,7 +501,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 item_texts.append(item_data)
                 cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
                 cursor.execute(
-                    "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s, %s)",
+                    "INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (%s, %s, %s, %s, NOW())",
                     (user.id, platform, item_data, price)
                 )
 
@@ -468,8 +524,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(file_name)
             context.user_data["step"] = "purchase_type"
 
-            # Send Notification to Telegram Channel (@TGnumbeupdate)
-            await notify_channel_purchase(context, user.first_name, platform, qty, total_price)
+            # Post notification to channel
+            await notify_channel_purchase(context, user.id, platform, qty, unit_price, first_number)
             return
 
         except Exception as e:
@@ -477,6 +533,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
+    # --- SINGLE PURCHASE LOGIC ---
     if text == "1️⃣ Single Purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
         conn = get_db_connection()
@@ -504,7 +561,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_balance(user.id, -price)
         cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
         cursor.execute(
-            "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (%s, %s, %s, %s, NOW())",
             (user.id, platform, item_data, price)
         )
         conn.commit()
@@ -516,8 +573,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_purchase_type_keyboard()
         )
 
-        # Send Notification to Telegram Channel (@TGnumbeupdate)
-        await notify_channel_purchase(context, user.first_name, platform, 1, price)
+        # Post notification to channel
+        await notify_channel_purchase(context, user.id, platform, 1, price, item_data)
         return
 
     if text == "📦 Bulk purchase":
@@ -590,12 +647,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile_text = f"👤 User Profile:\n━━━━━━━━━━━\n🆔 ID: {user.id}\n👤 Username: @{user.username if user.username else 'N/A'}\n💰 Balance: ${balance:.2f} USDT"
         await update.message.reply_text(profile_text)
 
+    # --- TODAY BUTTON FIXED ---
     elif text == "📅 Today":
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Today Query Fixed to match PostgreSQL Date format
         cursor.execute(
-            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND purchase_date::date = CURRENT_DATE ORDER BY purchase_date DESC",
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND DATE(purchase_date) = CURRENT_DATE ORDER BY purchase_date DESC",
             (user.id,)
         )
         rows = cursor.fetchall()
@@ -609,7 +666,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history_msg = "📅 Today's Purchase History:\n━━━━━━━━━━━━━━━━━━━━━\n"
         for row in rows:
             plat, data, prc, dt = row
-            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt}\n--------------------\n"
+            dt_str = dt.strftime("%d-%m-%Y %I:%M:%S %p") if isinstance(dt, datetime) else str(dt)
+            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt_str}\n--------------------\n"
         await update.message.reply_text(history_msg)
 
     elif text == "📜 History":
@@ -630,7 +688,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history_msg = "📜 Life-Time Purchase History (Last 15):\n━━━━━━━━━━━━━━━━━━━━━\n"
         for row in rows:
             plat, data, prc, dt = row
-            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt}\n--------------------\n"
+            dt_str = dt.strftime("%d-%m-%Y %I:%M:%S %p") if isinstance(dt, datetime) else str(dt)
+            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt_str}\n--------------------\n"
         await update.message.reply_text(history_msg)
 
     elif text == "💸 Withdraw":
@@ -676,7 +735,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot starting with auto channel notification & fixed Today button...")
+    print("Bot updated with screenshot-matching channel notification & fixed Today button...")
     application.run_polling()
 
 if __name__ == "__main__":
