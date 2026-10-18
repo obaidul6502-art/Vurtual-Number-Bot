@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 import config
@@ -153,23 +153,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📅 Today":
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Fixed Today button timezone date query
+        
+        # Absolute bulletproof fix: Fetch user's history and filter in Python based on Bangladesh local date
         cursor.execute(
-            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')::date ORDER BY purchase_date DESC",
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s ORDER BY purchase_date DESC LIMIT 30",
             (user.id,)
         )
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        if not rows:
+        # Get current Bangladesh date string (YYYY-MM-DD)
+        bd_today = (datetime.utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d")
+        
+        today_rows = []
+        for row in rows:
+            plat, data, prc, dt = row
+            if isinstance(dt, datetime):
+                # Convert database UTC timestamp to Bangladesh local timestamp
+                dt_bd = dt + timedelta(hours=6)
+                if dt_bd.strftime("%Y-%m-%d") == bd_today:
+                    today_rows.append((plat, data, prc, dt_bd))
+
+        if not today_rows:
             await update.message.reply_text("📅 Today's History:\n\nAji apni kono number kenen ni.")
             return
 
         history_msg = "📅 Today's Purchase History:\n━━━━━━━━━━━━━━━━━━━━━\n"
-        for row in rows:
-            plat, data, prc, dt = row
-            dt_str = dt.strftime("%d-%m-%Y %I:%M:%S %p") if isinstance(dt, datetime) else str(dt)
+        for row in today_rows:
+            plat, data, prc, dt_bd = row
+            dt_str = dt_bd.strftime("%d-%m-%Y %I:%M:%S %p")
             history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt_str}\n--------------------\n"
         await update.message.reply_text(history_msg)
 
@@ -191,7 +204,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history_msg = "📜 Life-Time Purchase History (Last 15):\n━━━━━━━━━━━━━━━━━━━━━\n"
         for row in rows:
             plat, data, prc, dt = row
-            dt_str = dt.strftime("%d-%m-%Y %I:%M:%S %p") if isinstance(dt, datetime) else str(dt)
+            # Convert lifetime display also to BD time
+            dt_bd = dt + timedelta(hours=6) if isinstance(dt, datetime) else dt
+            dt_str = dt_bd.strftime("%d-%m-%Y %I:%M:%S %p") if isinstance(dt_bd, datetime) else str(dt_bd)
             history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt_str}\n--------------------\n"
         await update.message.reply_text(history_msg)
 
