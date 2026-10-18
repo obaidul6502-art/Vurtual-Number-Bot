@@ -128,20 +128,19 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.close()
         conn.close()
 
-        await update.message.reply_text(f"✅ Added {item_type}!\nPrice: ${price}\nData: `{item_data}`", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Added {item_type}!\nPrice: ${price}\nData: {item_data}")
 
         users = get_all_users()
         for uid in users:
             try:
                 await context.bot.send_message(
                     chat_id=uid,
-                    text=f"🚨 **New Stock Alert!**\n\n📦 **Platform:** `{item_type.upper()}`\n💰 **Price:** `${price:.2f}`\n\nEkhoni bot e giye number kinun!",
-                    parse_mode="Markdown"
+                    text=f"🚨 New Stock Alert!\n\n📦 Platform: {item_type.upper()}\n💰 Price: ${price:.2f}\n\nEkhoni bot e giye number kinun!"
                 )
             except Exception:
                 pass
     except Exception:
-        await update.message.reply_text("❌ Format: `/add whatsapp 0.09 +8801700000000`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Format: /add whatsapp 0.09 +8801700000000")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -156,7 +155,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     caption = update.message.caption
     if not caption or not caption.startswith("/addfile"):
-        await update.message.reply_text("⚠️ Caption format: `/addfile whatsapp 0.09`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Caption format: /addfile whatsapp 0.09")
         return
 
     try:
@@ -178,15 +177,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.close()
         conn.close()
 
-        await update.message.reply_text(f"🎉 Bulk Import Success!\n📦 Category: `{item_type}`\n🔢 Total Added: `{len(lines)}`", parse_mode="Markdown")
+        await update.message.reply_text(f"🎉 Bulk Import Success!\n📦 Category: {item_type}\n🔢 Total Added: {len(lines)}")
 
         users = get_all_users()
         for uid in users:
             try:
                 await context.bot.send_message(
                     chat_id=uid,
-                    text=f"🚀 **New Stock Restocked!**\n\n📦 **Platform:** `{item_type.upper()}`\n🔢 **Added Quantity:** `{len(lines)} numbers`\n💰 **Price:** `${price:.2f}`\n\nStock sesh hobar age kine nin!",
-                    parse_mode="Markdown"
+                    text=f"🚀 New Stock Restocked!\n\n📦 Platform: {item_type.upper()}\n🔢 Added Quantity: {len(lines)} numbers\n💰 Price: ${price:.2f}\n\nStock sesh hobar age kine nin!"
                 )
             except Exception:
                 pass
@@ -204,18 +202,17 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount = float(context.args[1])
         
         update_balance(target_user_id, amount)
-        await update.message.reply_text(f"✅ Added `${amount}` to User ID: `{target_user_id}`", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Added ${amount} to User ID: {target_user_id}")
         
         try:
             await context.bot.send_message(
                 chat_id=target_user_id,
-                text=f"🎉 **Deposit Successful!**\n\nAdmin apnar account-e **`${amount}`** add korechen. Ekhon apni number kinte paren!",
-                parse_mode="Markdown"
+                text=f"🎉 Deposit Successful!\n\nAdmin apnar account-e ${amount} add korechen. Ekhon apni number kinte paren!"
             )
         except Exception:
             await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user.")
     except Exception:
-        await update.message.reply_text("❌ Format: `/addbal USER_ID AMOUNT`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Format: /addbal USER_ID AMOUNT")
 
 async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global MAINTENANCE_MODE
@@ -228,14 +225,14 @@ async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         status = context.args[0].lower()
         if status == "on":
             MAINTENANCE_MODE = True
-            await update.message.reply_text("⚠️ Bot is now in **Maintenance Mode**.", parse_mode="Markdown")
+            await update.message.reply_text("⚠️ Bot is now in Maintenance Mode.")
         elif status == "off":
             MAINTENANCE_MODE = False
-            await update.message.reply_text("✅ Bot is now **Live / Active**.", parse_mode="Markdown")
+            await update.message.reply_text("✅ Bot is now Live / Active.")
         else:
-            await update.message.reply_text("❌ Use: `/maintenance on` or `/maintenance off`", parse_mode="Markdown")
+            await update.message.reply_text("❌ Use: /maintenance on or /maintenance off")
     except Exception:
-        await update.message.reply_text(f"Current Maintenance Status: **{'ON' if MAINTENANCE_MODE else 'OFF'}**\nUse: `/maintenance on/off`", parse_mode="Markdown")
+        await update.message.reply_text(f"Current Maintenance Status: {'ON' if MAINTENANCE_MODE else 'OFF'}\nUse: /maintenance on/off")
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -245,7 +242,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message_text = " ".join(context.args)
     if not message_text:
-        await update.message.reply_text("❌ Format: `/broadcast Your message here...`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Format: /broadcast Your message here...")
         return
 
     users = get_all_users()
@@ -255,12 +252,12 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for uid in users:
         try:
-            await context.bot.send_message(chat_id=uid, text=f"📢 **Announcement / Update:**\n\n{message_text}", parse_mode="Markdown")
+            await context.bot.send_message(chat_id=uid, text=f"📢 Announcement / Update:\n\n{message_text}")
             success += 1
         except Exception:
             failed += 1
 
-    await status_msg.edit_text(f"✅ **Broadcast Completed!**\n\nSuccessful: {success}\nFailed: {failed}")
+    await status_msg.edit_text(f"✅ Broadcast Completed!\n\nSuccessful: {success}\nFailed: {failed}")
 
 def get_main_keyboard():
     keyboard = [
@@ -294,46 +291,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     if MAINTENANCE_MODE and user.id != ADMIN_ID:
-        await update.message.reply_text("🛠 **Bot is under Maintenance!** Please wait.")
+        await update.message.reply_text("🛠 Bot is under Maintenance! Please wait.")
         return
 
     get_user(user.id, user.username)
     context.user_data.clear()
 
-    welcome_text = f"👋 **Welcome, {user.first_name}!**\n\nChoose an option below:"
-    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    welcome_text = f"👋 Welcome, {user.first_name}!\n\nChoose an option below:"
+    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard())
 
 async def show_buy_menu(update: Update):
     wa_count, wa_price = get_stock_info("whatsapp")
     tg_count, tg_price = get_stock_info("telegram")
 
     msg_text = (
-        "🛒 **Buy Number**\n"
+        "🛒 Buy Number\n"
         "━━━━━━━\n"
         "Select the platform you need 👇\n\n"
-        f"📱 **WhatsApp** — 📦 `{wa_count}` in stock • 💰 `{wa_price:.2f}` USDT\n"
-        f"✈️ **Telegram** — 📦 `{tg_count}` in stock • 💰 `{tg_price:.2f}` USDT"
+        f"📱 WhatsApp — 📦 {wa_count} in stock • 💰 {wa_price:.2f} USDT\n"
+        f"✈️ Telegram — 📦 {tg_count} in stock • 💰 {tg_price:.2f} USDT"
     )
-    await update.message.reply_text(msg_text, reply_markup=get_platform_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text(msg_text, reply_markup=get_platform_keyboard())
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global MAINTENANCE_MODE
     user = update.effective_user
 
     if MAINTENANCE_MODE and user.id != ADMIN_ID:
-        await update.message.reply_text("🛠 **Bot is under Maintenance!** Please wait.")
+        await update.message.reply_text("🛠 Bot is under Maintenance! Please wait.")
         return
 
     text = update.message.text
     user_step = context.user_data.get("step")
 
-    # 1. Handle Cancel / Back
+    # 1. Back / Cancel handling
     if text in ["❌ Cancel", "🔙 Back"]:
         if user_step == "waiting_for_bulk_qty":
             context.user_data["step"] = "purchase_type"
-            platform = context.user_data.get("selected_platform", "whatsapp")
-            platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
-            count, price = get_stock_info(platform)
             await update.message.reply_text("🔙 Action cancelled.", reply_markup=get_purchase_type_keyboard())
             return
         elif user_step == "purchase_type":
@@ -345,7 +339,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
             return
 
-    # 2. Handle Bulk Quantity Input
+    # 2. Bulk Quantity Processing
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
@@ -366,7 +360,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items = cursor.fetchall()
 
             if len(items) < qty:
-                await update.message.reply_text(f"❌ Stock-e eto number nei! Available stock: `{len(items)}`", parse_mode="Markdown", reply_markup=get_purchase_type_keyboard())
+                await update.message.reply_text(f"❌ Stock-e eto number nei! Available stock: {len(items)}", reply_markup=get_purchase_type_keyboard())
                 cursor.close()
                 conn.close()
                 context.user_data["step"] = "purchase_type"
@@ -376,7 +370,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_balance = get_user(user.id, user.username)
 
             if user_balance < total_price:
-                await update.message.reply_text(f"⚠️ Insufficient balance!\nRequired: ${total_price:.2f}, Your Balance:${user_balance:.2f}", parse_mode="Markdown", reply_markup=get_purchase_type_keyboard())
+                await update.message.reply_text(f"⚠️ Insufficient balance!\nRequired: ${total_price:.2f}, Your Balance:${user_balance:.2f}", reply_markup=get_purchase_type_keyboard())
                 cursor.close()
                 conn.close()
                 context.user_data["step"] = "purchase_type"
@@ -419,7 +413,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
-    # 3. Handle Single Purchase
+    # 3. Single Purchase Handler
     if text == "1️⃣ Single Purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
         conn = get_db_connection()
@@ -458,7 +452,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 4. Handle Bulk Purchase Button Click
+    # 4. Bulk Purchase Prompt
     if text == "📦 Bulk purchase":
         context.user_data["step"] = "waiting_for_bulk_qty"
         platform = context.user_data.get("selected_platform", "whatsapp")
@@ -483,7 +477,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(bulk_prompt, reply_markup=cancel_keyboard)
         return
 
-    # 5. Menu Navigation
+    # 5. Main Options
     if text == "🛒 Buy Number":
         context.user_data["step"] = "category"
         await show_buy_menu(update)
@@ -503,7 +497,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
             f"📦 Stock: {count} numbers\n"
             f"💰 Price: {price:.2f} USDT per number\n\n"
-            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না።\n"
+            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না।\n"
             "Choose an option:"
         )
         await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard())
@@ -614,7 +608,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot 100% fixed and running without string formatting bugs...")
+    print("Bot starting clean...")
     application.run_polling()
 
 if __name__ == "__main__":
