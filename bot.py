@@ -324,7 +324,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_step = context.user_data.get("step")
 
-    # 1. Back / Cancel handling
+    # Back or Cancel
     if text in ["❌ Cancel", "🔙 Back"]:
         if user_step == "waiting_for_bulk_qty":
             context.user_data["step"] = "purchase_type"
@@ -339,7 +339,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
             return
 
-    # 2. Bulk Quantity Processing
+    # Bulk Quantity Input Handler
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
@@ -366,8 +366,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["step"] = "purchase_type"
                 return
 
-            total_price = sum([item[2] for item in items])
-            user_balance = get_user(user.id, user.username)
+            total_price = float(sum([item[2] for item in items]))
+            user_balance = float(get_user(user.id, user.username))
 
             if user_balance < total_price:
                 await update.message.reply_text(f"⚠️ Insufficient balance!\nRequired: ${total_price:.2f}, Your Balance:${user_balance:.2f}", reply_markup=get_purchase_type_keyboard())
@@ -380,11 +380,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             item_texts = []
             for item in items:
-                stock_id, item_data, price = item
+                stock_id = item[0]
+                item_data = str(item[1])
+                price = float(item[2])
+                
                 item_texts.append(item_data)
                 cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
                 cursor.execute(
-                    "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
+                    "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s, %s)",
                     (user.id, platform, item_data, price)
                 )
 
@@ -413,7 +416,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
-    # 3. Single Purchase Handler
+    # Single Purchase Handler
     if text == "1️⃣ Single Purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
         conn = get_db_connection()
@@ -427,8 +430,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             return
 
-        stock_id, item_data, price = stock_item
-        user_balance = get_user(user.id, user.username)
+        stock_id = stock_item[0]
+        item_data = str(stock_item[1])
+        price = float(stock_item[2])
+        user_balance = float(get_user(user.id, user.username))
 
         if user_balance < price:
             await update.message.reply_text(f"⚠️ Insufficient balance! Price: ${price:.2f}, Balance:${user_balance:.2f}", reply_markup=get_purchase_type_keyboard())
@@ -439,7 +444,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_balance(user.id, -price)
         cursor.execute("DELETE FROM stock WHERE id = %s", (stock_id,))
         cursor.execute(
-            "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s)",
+            "INSERT INTO history (user_id, platform, item_data, price) VALUES (%s, %s, %s, %s)",
             (user.id, platform, item_data, price)
         )
         conn.commit()
@@ -452,7 +457,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 4. Bulk Purchase Prompt
+    # Bulk Purchase Prompt
     if text == "📦 Bulk purchase":
         context.user_data["step"] = "waiting_for_bulk_qty"
         platform = context.user_data.get("selected_platform", "whatsapp")
@@ -477,7 +482,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(bulk_prompt, reply_markup=cancel_keyboard)
         return
 
-    # 5. Main Options
+    # Menu Options
     if text == "🛒 Buy Number":
         context.user_data["step"] = "category"
         await show_buy_menu(update)
@@ -608,7 +613,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot starting clean...")
+    print("Bot started cleanly without any SQL syntax mismatch...")
     application.run_polling()
 
 if __name__ == "__main__":
