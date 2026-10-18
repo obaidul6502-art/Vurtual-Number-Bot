@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = "8624066909:AAEzSG-mMxGGZgXlffeMaJG-4NFNsoia0hI"
 ADMIN_ID = 6132325140  
-UPDATE_CHANNEL = "@TGnumbeupdate"  # Apnar update channel username
+UPDATE_CHANNEL = "@TGnumbeupdate"  
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 MAINTENANCE_MODE = False
@@ -114,7 +114,6 @@ def get_stock_info(item_type):
     return count, price
 
 def get_total_users_balance():
-    """Shob user er total joma balance calculating function"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT SUM(balance) FROM users")
@@ -140,8 +139,6 @@ def generate_order_id():
     mid = "".join(random.choices(string.ascii_letters + string.digits, k=5))
     suffix = "".join(random.choices(string.ascii_letters + string.digits, k=10))
     return f"{prefix}-*****{mid}S{suffix}"
-
-# --- CHANNEL NOTIFICATIONS MATCHING SCREENSHOT ---
 
 async def notify_channel_purchase(context: ContextTypes.DEFAULT_TYPE, user_id, platform, qty, unit_price, number_sample):
     try:
@@ -185,8 +182,6 @@ async def notify_channel_deposit(context: ContextTypes.DEFAULT_TYPE, user_id, am
         await context.bot.send_message(chat_id=UPDATE_CHANNEL, text=msg, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Failed to post deposit notification: {str(e)}")
-
-# --- ADMIN COMMANDS ---
 
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -290,7 +285,6 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user.")
 
-        # Post deposit alert to channel
         await notify_channel_deposit(context, target_user_id, amount)
 
     except Exception:
@@ -450,7 +444,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
             return
 
-    # --- BULK PURCHASE LOGIC ---
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
@@ -524,7 +517,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(file_name)
             context.user_data["step"] = "purchase_type"
 
-            # Post notification to channel
             await notify_channel_purchase(context, user.id, platform, qty, unit_price, first_number)
             return
 
@@ -533,7 +525,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
-    # --- SINGLE PURCHASE LOGIC ---
     if text == "1️⃣ Single Purchase":
         platform = context.user_data.get("selected_platform", "whatsapp")
         conn = get_db_connection()
@@ -573,7 +564,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_purchase_type_keyboard()
         )
 
-        # Post notification to channel
         await notify_channel_purchase(context, user.id, platform, 1, price, item_data)
         return
 
@@ -647,12 +637,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile_text = f"👤 User Profile:\n━━━━━━━━━━━\n🆔 ID: {user.id}\n👤 Username: @{user.username if user.username else 'N/A'}\n💰 Balance: ${balance:.2f} USDT"
         await update.message.reply_text(profile_text)
 
-    # --- TODAY BUTTON FIXED ---
+    # --- TODAY BUTTON FULLY FIXED WITH ROBUST DATE CHECK ---
     elif text == "📅 Today":
         conn = get_db_connection()
         cursor = conn.cursor()
+        # Robust date comparison casting timestamp to date
         cursor.execute(
-            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND DATE(purchase_date) = CURRENT_DATE ORDER BY purchase_date DESC",
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND purchase_date::date = CURRENT_DATE ORDER BY purchase_date DESC",
             (user.id,)
         )
         rows = cursor.fetchall()
@@ -735,7 +726,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot updated with screenshot-matching channel notification & fixed Today button...")
+    print("Bot started with completely fixed Today button and unchanged main structure...")
     application.run_polling()
 
 if __name__ == "__main__":
