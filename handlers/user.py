@@ -153,9 +153,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📅 Today":
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Today button query fixed with Asia/Dhaka timezone matching
+        # Fixed Today button timezone date query
         cursor.execute(
-            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')::date = (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')::date ORDER BY purchase_date DESC",
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND (purchase_date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')::date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')::date ORDER BY purchase_date DESC",
             (user.id,)
         )
         rows = cursor.fetchall()
