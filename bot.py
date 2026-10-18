@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 TOKEN = "8624066909:AAEzSG-mMxGGZgXlffeMaJG-4NFNsoia0hI"
 ADMIN_ID = 6132325140  
+UPDATE_CHANNEL = "@TGnumbeupdate"  # Apnar channel username
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 MAINTENANCE_MODE = False
@@ -109,6 +110,35 @@ def get_stock_info(item_type):
     count = row[0] if row else 0
     price = row[1] if row and row[1] is not None else 0.0
     return count, price
+
+def get_bot_total_sales():
+    """Bot-er ekhon porjonto mot bikri/revenue hiseb korar jonno"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(price) FROM history")
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row[0] if row and row[0] is not None else 0.0
+
+async def notify_channel_purchase(context: ContextTypes.DEFAULT_TYPE, user_first_name, platform, qty, total_cost):
+    """Jokhon e keo kinbe, tokhon e eiti channel e post korbe"""
+    try:
+        bot_total_sales = get_bot_total_sales()
+        channel_msg = (
+            "🎉 **New Successful Purchase!**\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 **Buyer:** {user_first_name}\n"
+            f"📦 **Platform:** `{platform.upper()}`\n"
+            f"🔢 **Quantity Purchased:** `{qty} pcs`\n"
+            f"💰 **Total Spent:** `${total_cost:.2f} USDT`\n\n"
+            f"📊 **Bot Total Sales:** `${bot_total_sales:.2f} USDT`\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "🚀 Buy virtual numbers instantly using our bot!"
+        )
+        await context.bot.send_message(chat_id=UPDATE_CHANNEL, text=channel_msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Failed to send notification to channel: {str(e)}")
 
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -214,7 +244,6 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("❌ Format: /addbal USER_ID AMOUNT")
 
-# --- ADMIN COMMAND TO SEE ALL USERS & BALANCES ---
 async def admin_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -438,6 +467,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             os.remove(file_name)
             context.user_data["step"] = "purchase_type"
+
+            # Send Notification to Telegram Channel (@TGnumbeupdate)
+            await notify_channel_purchase(context, user.first_name, platform, qty, total_price)
             return
 
         except Exception as e:
@@ -483,6 +515,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎉 Single Purchase Successful!\n📦 Platform: {platform.upper()}\n🔑 Details:\n{item_data}",
             reply_markup=get_purchase_type_keyboard()
         )
+
+        # Send Notification to Telegram Channel (@TGnumbeupdate)
+        await notify_channel_purchase(context, user.first_name, platform, 1, price)
         return
 
     if text == "📦 Bulk purchase":
@@ -546,7 +581,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📞 Customer Support & Help Desk\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             "👤 Admin Support: @Fbotphere\n"
-            "📢 Update Channel: @TGNumberUpdate"
+            "📢 Update Channel: @TGnumbeupdate"
         )
         await update.message.reply_text(support_text)
 
@@ -558,9 +593,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📅 Today":
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Fixed Today query using TO_CHAR for accurate timezone comparison
+        # Today Query Fixed to match PostgreSQL Date format
         cursor.execute(
-            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND TO_CHAR(purchase_date, 'YYYY-MM-DD') = TO_CHAR(CURRENT_TIMESTAMP, 'YYYY-MM-DD') ORDER BY purchase_date DESC",
+            "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND purchase_date::date = CURRENT_DATE ORDER BY purchase_date DESC",
             (user.id,)
         )
         rows = cursor.fetchall()
@@ -632,7 +667,7 @@ def main():
     application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("users", admin_users_command)) # Notun admin command
+    application.add_handler(CommandHandler("users", admin_users_command))
     application.add_handler(CommandHandler("add", add_stock))
     application.add_handler(CommandHandler("addbal", add_bal))
     application.add_handler(CommandHandler("maintenance", maintenance_command))
@@ -641,7 +676,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot started with fixed Today button and /users command...")
+    print("Bot starting with auto channel notification & fixed Today button...")
     application.run_polling()
 
 if __name__ == "__main__":
