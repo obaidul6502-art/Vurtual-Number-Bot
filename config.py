@@ -1,0 +1,7 @@
+import os
+
+TOKEN = "8624066909:AAFwjVq1vrfBoXRdtCLykaOBLalXnV03wqs"
+ADMIN_ID = 6132325140  
+UPDATE_CHANNEL = "@TGnumbeupdate"  
+DATABASE_URL = os.environ.get("DATABASE_URL")
+MAINTENANCE_MODE = False

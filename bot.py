@@ -1,6 +1,4 @@
 import os
-import psycopg2
-import sqlite3
 import logging
 import re
 import random
@@ -10,6 +8,9 @@ from threading import Thread
 from flask import Flask
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+
+from config import TOKEN, ADMIN_ID, UPDATE_CHANNEL, DATABASE_URL, MAINTENANCE_MODE
+from database import get_db_connection, init_db, get_user, update_balance, get_all_users, get_stock_info, get_total_users_balance
 
 app = Flask(__name__)
 
@@ -24,136 +25,78 @@ def run_flask():
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = "8624066909:AAEzSG-mMxGGZgXlffeMaJG-4NFNsoia0hI"
-ADMIN_ID = 6132325140  
-UPDATE_CHANNEL = "@TGnumbeupdate"  
-DATABASE_URL = os.environ.get("DATABASE_URL")
-
-MAINTENANCE_MODE = False
-
-def get_db_connection():
-    if DATABASE_URL:
-        return psycopg2.connect(DATABASE_URL)
-    else:
-        return sqlite3.connect('bot_database.db')
-
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    if DATABASE_URL:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                balance REAL DEFAULT 0.0
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS stock (
-                id SERIAL PRIMARY KEY,
-                item_type TEXT,
-                item_data TEXT,
-                price REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS history (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                platform TEXT,
-                item_data TEXT,
-                price REAL,
-                purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                balance REAL DEFAULT 0.0
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS stock (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_type TEXT,
-                item_data TEXT,
-                price REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                platform TEXT,
-                item_data TEXT,
-                price REAL,
-                purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-    conn.commit()
-    cursor.close()
-    conn.close()
-
 init_db()
 
-def get_user(user_id, username):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"SELECT balance FROM users WHERE user_id = {placeholder}", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        cursor.execute(f"INSERT INTO users (user_id, username, balance) VALUES ({placeholder}, {placeholder}, {placeholder})", (user_id, username, 0.0))
+def init_settings_table():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         conn.commit()
-        balance = 0.0
-    else:
-        balance = row[0]
-    cursor.close()
-    conn.close()
-    return balance
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error initializing settings table: {str(e)}")
 
-def update_balance(user_id, amount):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"UPDATE users SET balance = balance + {placeholder} WHERE user_id = {placeholder}", (amount, user_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
+init_settings_table()
 
-def get_all_users():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users")
-    users = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return [u[0] for u in users]
+def get_main_keyboard():
+    keyboard = [
+        ["🛒 Buy Number"],
+        ["💳 Deposit", "📞 Support"],
+        ["👤 Profile", "📅 Today"],
+        ["📜 History", "📚 Method"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_stock_info(item_type):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"SELECT COUNT(*), AVG(price) FROM stock WHERE item_type = {placeholder}", (item_type,))
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    count = row[0] if row else 0
-    price = row[1] if row and row[1] is not None else 0.0
-    return count, price
+def get_purchase_type_keyboard():
+    keyboard = [
+        ["1️⃣ Single Purchase", "📦 Bulk purchase"],
+        ["🔙 Back"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_total_users_balance():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT SUM(balance) FROM users")
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return float(row[0]) if row and row[0] is not None else 0.0
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    if user_id == ADMIN_ID:
+        return True
+    try:
+        member = await context.bot.get_chat_member(chat_id=UPDATE_CHANNEL, user_id=user_id)
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+    except Exception:
+        pass
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Update Channel", url=f"https://t.me/{UPDATE_CHANNEL.replace('@', '')}")],
+        [InlineKeyboardButton("🔄 Check Membership", callback_data="check_sub")]
+    ])
+    await update.message.reply_text(
+        f"⚠️ **Channel Membership Required!**\n\nPlease join our update channel {UPDATE_CHANNEL} first to use this bot features.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    return False
+
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "check_sub":
+        user_id = query.from_user.id
+        try:
+            member = await context.bot.get_chat_member(chat_id=UPDATE_CHANNEL, user_id=user_id)
+            if member.status in ['member', 'administrator', 'creator']:
+                await query.message.edit_text("✅ Thank you for joining! You can now use the bot.", reply_markup=None)
+                await query.message.reply_text("🔙 Main menu:", reply_markup=get_main_keyboard())
+            else:
+                await query.answer("❌ You haven't joined the channel yet!", show_alert=True)
+        except Exception:
+            await query.answer("❌ Error checking membership. Please try again.", show_alert=True)
 
 def mask_user_id(uid):
     s = str(uid)
@@ -171,15 +114,15 @@ def generate_order_id():
     prefix = "".join(random.choices(string.digits, k=3))
     mid = "".join(random.choices(string.ascii_letters + string.digits, k=5))
     suffix = "".join(random.choices(string.ascii_letters + string.digits, k=10))
-    return f"{prefix}-*****{mid}S{suffix}"
+    return f"{prefix}-{mid}S{suffix}"
 
-async def notify_channel_purchase(context: ContextTypes.DEFAULT_TYPE, user_id, platform, qty, unit_price, number_sample):
+async def notify_channel_purchase(context: ContextTypes.DEFAULT_TYPE, user_id, platform, qty, unit_price, number_sample, specific_order_id=None):
     try:
         total_bot_bal = get_total_users_balance()
         now_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
         masked_uid = mask_user_id(user_id)
         masked_num = mask_number(number_sample)
-        order_id = generate_order_id()
+        order_id = specific_order_id if specific_order_id else generate_order_id()
 
         msg = (
             "Order History\n"
@@ -216,6 +159,52 @@ async def notify_channel_deposit(context: ContextTypes.DEFAULT_TYPE, user_id, am
     except Exception as e:
         logger.error(f"Failed to post deposit notification: {str(e)}")
 
+# ADMIN COMMAND TO SET METHOD LINK: /setmethod ...
+async def set_method_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
+        return
+    try:
+        method_text = " ".join(context.args)
+        if not method_text:
+            await update.message.reply_text("❌ Format: /setmethod Your link or instructions here")
+            return
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        ph = "%s" if DATABASE_URL else "?"
+        if DATABASE_URL:
+            cursor.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", ("work_method", method_text))
+        else:
+            cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("work_method", method_text))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        await update.message.reply_text(f"✅ Method successfully updated!\n\n{method_text}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+# ADMIN COMMAND TO DELETE METHOD LINK: /delmethod
+async def del_method_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Apni admin non!")
+        return
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        ph = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"DELETE FROM settings WHERE key = {ph}", ("work_method",))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        await update.message.reply_text("🗑️ Work method link has been deleted successfully!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -229,8 +218,8 @@ async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"INSERT INTO stock (item_type, item_data, price) VALUES ({placeholder}, {placeholder}, {placeholder})", (item_type, item_data, price))
+        ph = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"INSERT INTO stock (item_type, item_data, price) VALUES ({ph}, {ph}, {ph})", (item_type, item_data, price))
         conn.commit()
         cursor.close()
         conn.close()
@@ -278,25 +267,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        ph = "%s" if DATABASE_URL else "?"
         for line in lines:
-            cursor.execute(f"INSERT INTO stock (item_type, item_data, price) VALUES ({placeholder}, {placeholder}, {placeholder})", (item_type, line, price))
+            cursor.execute(f"INSERT INTO stock (item_type, item_data, price) VALUES ({ph}, {ph}, {ph})", (item_type, line, price))
         conn.commit()
         cursor.close()
         conn.close()
 
         await update.message.reply_text(f"🎉 Bulk Import Success!\n📦 Category: {item_type}\n🔢 Total Added: {len(lines)}")
-
-        users = get_all_users()
-        for uid in users:
-            try:
-                await context.bot.send_message(
-                    chat_id=uid,
-                    text=f"🚀 New Stock Restocked!\n\n📦 Platform: {item_type.upper()}\n🔢 Added Quantity: {len(lines)} numbers\n💰 Price: ${price:.2f}\n\nStock sesh hobar age kine nin!"
-                )
-            except Exception:
-                pass
-
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
@@ -310,17 +288,30 @@ async def add_bal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount = float(context.args[1])
         
         update_balance(target_user_id, amount)
-        await update.message.reply_text(f"✅ Added ${amount} to User ID: {target_user_id}")
         
-        try:
-            await context.bot.send_message(
-                chat_id=target_user_id,
-                text=f"🎉 Deposit Successful!\n\nAdmin apnar account-e ${amount} add korechen. Ekhon apni number kinte paren!"
-            )
-        except Exception:
-            await update.message.reply_text("⚠️ Balance added in DB, but couldn't send notification to user.")
+        if amount > 0:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if DATABASE_URL:
+                cursor.execute("INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (%s, %s, %s, %s, NOW())", (target_user_id, "deposit", f"Deposit Approved: ${amount}", amount))
+            else:
+                cursor.execute("INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (?, ?, ?, ?, DATETIME('now'))", (target_user_id, "deposit", f"Deposit Approved: ${amount}", amount))
+            conn.commit()
+            cursor.close()
+            conn.close()
 
+        await update.message.reply_text(f"✅ Added ${amount} to User ID: {target_user_id}")
         await notify_channel_deposit(context, target_user_id, amount)
+
+        try:
+            user_msg = (
+                "✅ **Deposit Approved Successfully!**\n\n"
+                f"💵 **Amount Added:** `${amount:.2f}` USDT\n"
+                "🎉 Your balance has been updated. You can now buy numbers!"
+            )
+            await context.bot.send_message(chat_id=target_user_id, text=user_msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Failed to send deposit confirmation to user {target_user_id}: {str(e)}")
 
     except Exception:
         await update.message.reply_text("❌ Format: /addbal USER_ID AMOUNT")
@@ -330,7 +321,7 @@ async def admin_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user_id != ADMIN_ID:
         await update.message.reply_text("⛔ Apni admin non!")
         return
-    
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT user_id, username, balance FROM users")
@@ -339,146 +330,44 @@ async def admin_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     conn.close()
 
     if not rows:
-        await update.message.reply_text("📁 Kono user nei database-e.")
+        await update.message.reply_text("👥 Kono user paowa jayni.")
         return
 
-    msg = "👥 **All Registered Users & Balances:**\n━━━━━━━━━━━━━━━━━━━━━\n"
-    for row in rows:
-        uid, uname, bal = row
-        msg += f"🆔 ID: `{uid}`\n👤 @{uname if uname else 'N/A'}\n💰 Balance: `${bal:.2f}`\n--------------------\n"
+    msg = "👥 **All Users List & Balance:**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    for r in rows:
+        username_str = f"@{r[1]}" if r[1] else "No Username"
+        msg += f"🆔 ID: `{r[0]}` | {username_str}\n💰 Balance: `${r[2]:.2f}` USDT\n--------------------\n"
     
-    if len(msg) > 4000:
-        msg = msg[:4000] + "\n... (list too long)"
-    
-    await update.message.reply_text(msg, parse_mode="Markdown")
-
-async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global MAINTENANCE_MODE
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ Apni admin non!")
-        return
-    
-    try:
-        status = context.args[0].lower()
-        if status == "on":
-            MAINTENANCE_MODE = True
-            await update.message.reply_text("⚠️ Bot is now in Maintenance Mode.")
-        elif status == "off":
-            MAINTENANCE_MODE = False
-            await update.message.reply_text("✅ Bot is now Live / Active.")
-        else:
-            await update.message.reply_text("❌ Use: /maintenance on or /maintenance off")
-    except Exception:
-        await update.message.reply_text(f"Current Maintenance Status: {'ON' if MAINTENANCE_MODE else 'OFF'}\nUse: /maintenance on/off")
-
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ Apni admin non!")
-        return
-    
-    message_text = " ".join(context.args)
-    if not message_text:
-        await update.message.reply_text("❌ Format: /broadcast Your message here...")
-        return
-
-    users = get_all_users()
-    success = 0
-    failed = 0
-    status_msg = await update.message.reply_text(f"⏳ Broadcasting to {len(users)} users...")
-
-    for uid in users:
-        try:
-            await context.bot.send_message(chat_id=uid, text=f"📢 Announcement / Update:\n\n{message_text}")
-            success += 1
-        except Exception:
-            failed += 1
-
-    await status_msg.edit_text(f"✅ Broadcast Completed!\n\nSuccessful: {success}\nFailed: {failed}")
-
-def get_main_keyboard():
-    keyboard = [
-        ["🛒 Buy Number"],
-        ["💳 Deposit", "📞 Support"],
-        ["👤 Profile", "📅 Today"],
-        ["📜 History", "💸 Withdraw"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-def get_platform_keyboard():
-    keyboard = [
-        ["📱 WhatsApp", "✈️ Telegram"],
-        ["🔙 Back"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-def get_purchase_type_keyboard():
-    keyboard = [
-        ["1️⃣ Single Purchase", "📦 Bulk purchase"],
-        ["🔙 Back"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-async def post_init(application):
-    commands = [
-        BotCommand("start", "🔄 Restart Bot / Show Menu"),
-        BotCommand("users", "👥 View All Users & Balances (Admin)")
-    ]
-    await application.bot.set_my_commands(commands)
+    await update.message.reply_text(msg[:4000], parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global MAINTENANCE_MODE
     user = update.effective_user
-
-    if MAINTENANCE_MODE and user.id != ADMIN_ID:
-        await update.message.reply_text("🛠 Bot is under Maintenance! Please wait.")
-        return
-
     get_user(user.id, user.username)
     context.user_data.clear()
-
-    welcome_text = f"👋 Welcome, {user.first_name}!\n\nChoose an option below:"
-    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard())
+    await update.message.reply_text(f"👋 Welcome, {user.first_name}!", reply_markup=get_main_keyboard())
 
 async def show_buy_menu(update: Update):
     wa_count, wa_price = get_stock_info("whatsapp")
     tg_count, tg_price = get_stock_info("telegram")
-
-    msg_text = (
-        "🛒 Buy Number\n"
-        "━━━━━━━\n"
-        "Select the platform you need 👇\n\n"
-        f"📱 WhatsApp — 📦 {wa_count} in stock • 💰 {wa_price:.2f} USDT\n"
-        f"✈️ Telegram — 📦 {tg_count} in stock • 💰 {tg_price:.2f} USDT"
-    )
-    await update.message.reply_text(msg_text, reply_markup=get_platform_keyboard())
+    msg = f"🛒 Buy Number\n\n📱 WhatsApp — 📦 {wa_count} in stock • 💰 {wa_price:.2f} USDT\n✈️ Telegram — 📦 {tg_count} in stock • 💰 {tg_price:.2f} USDT"
+    keyboard = [["📱 WhatsApp", "✈️ Telegram"], ["🔙 Back"]]
+    return msg, ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global MAINTENANCE_MODE
     user = update.effective_user
-
-    if MAINTENANCE_MODE and user.id != ADMIN_ID:
-        await update.message.reply_text("🛠 Bot is under Maintenance! Please wait.")
-        return
-
     text = update.message.text
     user_step = context.user_data.get("step")
 
-    if text in ["❌ Cancel", "🔙 Back"]:
-        if user_step == "waiting_for_bulk_qty":
-            context.user_data["step"] = "purchase_type"
-            await update.message.reply_text("🔙 Action cancelled.", reply_markup=get_purchase_type_keyboard())
-            return
-        elif user_step == "purchase_type":
-            context.user_data["step"] = "category"
-            await show_buy_menu(update)
-            return
-        else:
-            context.user_data.clear()
-            await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
-            return
+    if text == "/users":
+        await admin_users_command(update, context)
+        return
 
+    if text in ["❌ Cancel", "🔙 Back"]:
+        context.user_data.clear()
+        await update.message.reply_text("🔙 Main menu-te phire asha hoyeche.", reply_markup=get_main_keyboard())
+        return
+
+    # BULK PURCHASE QUANTITY INPUT HANDLER
     if user_step == "waiting_for_bulk_qty":
         try:
             numbers_found = re.findall(r'\d+', text)
@@ -494,9 +383,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             platform = context.user_data.get("selected_platform", "whatsapp")
             conn = get_db_connection()
             cursor = conn.cursor()
-            placeholder = "%s" if DATABASE_URL else "?"
+            ph = "%s" if DATABASE_URL else "?"
             
-            cursor.execute(f"SELECT id, item_data, price FROM stock WHERE item_type = {placeholder} LIMIT {placeholder}", (platform, qty))
+            cursor.execute(f"SELECT id, item_data, price FROM stock WHERE item_type = {ph} LIMIT {ph}", (platform, qty))
             items = cursor.fetchall()
 
             if len(items) < qty:
@@ -519,27 +408,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_balance(user.id, -total_price)
             
             item_texts = []
-            unit_price = items[0][2] if items else 0.0
-            first_number = items[0][1] if items else ""
-
             for item in items:
-                stock_id = item[0]
-                item_data = str(item[1])
-                price = float(item[2])
-                
+                stock_id, item_data, price = item[0], str(item[1]), float(item[2])
                 item_texts.append(item_data)
-                cursor.execute(f"DELETE FROM stock WHERE id = {placeholder}", (stock_id,))
-                
+                cursor.execute(f"DELETE FROM stock WHERE id = {ph}", (stock_id,))
                 if DATABASE_URL:
-                    cursor.execute(
-                        "INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (%s, %s, %s, %s, NOW())",
-                        (user.id, platform, item_data, price)
-                    )
+                    cursor.execute("INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (%s, %s, %s, %s, NOW())", (user.id, platform, item_data, price))
                 else:
-                    cursor.execute(
-                        "INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (?, ?, ?, ?, DATETIME('now'))",
-                        (user.id, platform, item_data, price)
-                    )
+                    cursor.execute("INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (?, ?, ?, ?, DATETIME('now'))", (user.id, platform, item_data, price))
 
             conn.commit()
             cursor.close()
@@ -557,10 +433,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_purchase_type_keyboard()
                 )
             
-            os.remove(file_name)
+            if os.path.exists(file_name):
+                os.remove(file_name)
+                
+            shared_order_id = generate_order_id()
+            unit_price_avg = total_price / qty if qty > 0 else 0
+            await notify_channel_purchase(context, user.id, platform, qty, unit_price_avg, item_texts[0], specific_order_id=shared_order_id)
+            
             context.user_data["step"] = "purchase_type"
-
-            await notify_channel_purchase(context, user.id, platform, qty, unit_price, first_number)
             return
 
         except Exception as e:
@@ -568,58 +448,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["step"] = "purchase_type"
             return
 
-    if text == "1️⃣ Single Purchase":
-        platform = context.user_data.get("selected_platform", "whatsapp")
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT id, item_data, price FROM stock WHERE item_type = {placeholder} LIMIT 1", (platform,))
-        stock_item = cursor.fetchone()
-
-        if not stock_item:
-            await update.message.reply_text(f"❌ Current {platform.upper()} stock is empty!", reply_markup=get_purchase_type_keyboard())
-            cursor.close()
-            conn.close()
-            return
-
-        stock_id = stock_item[0]
-        item_data = str(stock_item[1])
-        price = float(stock_item[2])
-        user_balance = float(get_user(user.id, user.username))
-
-        if user_balance < price:
-            await update.message.reply_text(f"⚠️ Insufficient balance! Price: ${price:.2f}, Balance:${user_balance:.2f}", reply_markup=get_purchase_type_keyboard())
-            cursor.close()
-            conn.close()
-            return
-
-        update_balance(user.id, -price)
-        cursor.execute(f"DELETE FROM stock WHERE id = {placeholder}", (stock_id,))
-        
-        if DATABASE_URL:
-            cursor.execute(
-                "INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (%s, %s, %s, %s, NOW())",
-                (user.id, platform, item_data, price)
-            )
-        else:
-            cursor.execute(
-                "INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (?, ?, ?, ?, DATETIME('now'))",
-                (user.id, platform, item_data, price)
-            )
-            
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        await update.message.reply_text(
-            f"🎉 Single Purchase Successful!\n📦 Platform: {platform.upper()}\n🔑 Details:\n{item_data}",
-            reply_markup=get_purchase_type_keyboard()
-        )
-
-        await notify_channel_purchase(context, user.id, platform, 1, price, item_data)
-        return
-
     if text == "📦 Bulk purchase":
+        if not await check_subscription(update, context):
+            return
         context.user_data["step"] = "waiting_for_bulk_qty"
         platform = context.user_data.get("selected_platform", "whatsapp")
         platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
@@ -636,157 +467,256 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔢 You can afford: {affordable} numbers\n\n"
             "✍️ How many numbers do you want?\n"
             f"Send a number between 1 and {min(count, affordable) if affordable > 0 else count}.\n\n"
-            "Use /cancel or click button below to abort."
+            "Click ❌ Cancel button to abort."
         )
         
         cancel_keyboard = ReplyKeyboardMarkup([["❌ Cancel"]], resize_keyboard=True)
         await update.message.reply_text(bulk_prompt, reply_markup=cancel_keyboard)
         return
 
-    if text == "🛒 Buy Number":
+    elif text == "🛒 Buy Number":
+        if not await check_subscription(update, context):
+            return
         context.user_data["step"] = "category"
-        await show_buy_menu(update)
+        msg, kb = await show_buy_menu(update)
+        await update.message.reply_text(msg, reply_markup=kb)
 
     elif text in ["📱 WhatsApp", "✈️ Telegram"]:
+        if not await check_subscription(update, context):
+            return
         platform = "whatsapp" if "WhatsApp" in text else "telegram"
-        platform_title = "WhatsApp Numbers" if platform == "whatsapp" else "Telegram Numbers"
-        
         context.user_data["selected_platform"] = platform
         context.user_data["step"] = "purchase_type"
-
         count, price = get_stock_info(platform)
+        await update.message.reply_text(f"📦 Stock: {count} | Price: ${price:.2f}", reply_markup=get_purchase_type_keyboard())
 
-        msg_text = (
-            f"📱 {platform_title}\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🇺🇸 USA +1 {platform.title()} Number Only\n\n"
-            f"📦 Stock: {count} numbers\n"
-            f"💰 Price: {price:.2f} USDT per number\n\n"
-            "নাম্বারে ওটিপি না আসলে রিফান্ড পাবেন। বিস্তারিত না পড়ে নাম্বার কিনবেন না।\n"
-            "Choose an option:"
-        )
-        await update.message.reply_text(msg_text, reply_markup=get_purchase_type_keyboard())
-
-    elif text == "💳 Deposit":
-        keyboard = [
-            [InlineKeyboardButton("💳 bKash / Nagad", callback_data="pay_bkash")],
-            [InlineKeyboardButton("🪙 Crypto (BEP-20 / USDT)", callback_data="pay_crypto")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("💳 Select Deposit Method:", reply_markup=reply_markup)
-
-    elif text == "📞 Support":
-        support_text = (
-            "📞 Customer Support & Help Desk\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "👤 Admin Support: @Fbotphere\n"
-            "📢 Update Channel: @TGnumbeupdate"
-        )
-        await update.message.reply_text(support_text)
-
-    elif text == "👤 Profile":
-        balance = get_user(user.id, user.username)
-        profile_text = f"👤 User Profile:\n━━━━━━━━━━━\n🆔 ID: {user.id}\n👤 Username: @{user.username if user.username else 'N/A'}\n💰 Balance: ${balance:.2f} USDT"
-        await update.message.reply_text(profile_text)
-
-    elif text == "📅 Today":
+    elif text == "1️⃣ Single Purchase":
+        if not await check_subscription(update, context):
+            return
+        platform = context.user_data.get("selected_platform", "whatsapp")
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        
+        ph = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT id, item_data, price FROM stock WHERE item_type = {ph} LIMIT 1", (platform,))
+        stock_item = cursor.fetchone()
+        if not stock_item:
+            await update.message.reply_text(f"❌ Stock empty!")
+            cursor.close()
+            conn.close()
+            return
+        stock_id, item_data, price = stock_item[0], str(stock_item[1]), float(stock_item[2])
+        user_balance = get_user(user.id, user.username)
+        if user_balance < price:
+            await update.message.reply_text(f"⚠️ Insufficient balance!")
+            cursor.close()
+            conn.close()
+            return
+        update_balance(user.id, -price)
+        cursor.execute(f"DELETE FROM stock WHERE id = {ph}", (stock_id,))
         if DATABASE_URL:
-            cursor.execute(
-                "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = %s AND purchase_date::date = CURRENT_DATE ORDER BY purchase_date DESC",
-                (user.id,)
-            )
+            cursor.execute("INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (%s, %s, %s, %s, NOW())", (user.id, platform, item_data, price))
         else:
-            cursor.execute(
-                "SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = ? AND DATE(purchase_date) = DATE('now') ORDER BY purchase_date DESC",
-                (user.id,)
-            )
-            
+            cursor.execute("INSERT INTO history (user_id, platform, item_data, price, purchase_date) VALUES (?, ?, ?, ?, DATETIME('now'))", (user.id, platform, item_data, price))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        shared_order_id = generate_order_id()
+        time_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+        platform_name = platform.title()
+        
+        parts = item_data.split()
+        phone_num = parts[0]
+        otp_link = parts[1] if len(parts) > 1 and "http" in parts[1] else f"http://169.58.215.134:11111/sms/{platform.lower()}-{shared_order_id.lower()}"
+
+        receipt_msg = (
+            f"1️⃣ Single Purchase — {platform_name}\n"
+            "🎁 Purchase Successful!\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📱 Platform: {platform_name}\n"
+            f"🆔 Order ID: `{shared_order_id}`\n"
+            f"📱 Number: `{phone_num}`\n"
+            f"🔗 Link: {otp_link}\n"
+            f"💵 Price: {price:.2f} USDT\n"
+            f"⏰ Time: {time_str}\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "👇 Tap below to get your OTP"
+        )
+
+        inline_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 Get OTP", url=otp_link if otp_link.startswith("http") else f"https://t.me/{UPDATE_CHANNEL.replace('@', '')}")]
+        ])
+
+        await update.message.reply_text(receipt_msg, reply_markup=inline_kb, parse_mode="Markdown")
+        await notify_channel_purchase(context, user.id, platform, 1, price, item_data, specific_order_id=shared_order_id)
+
+    elif text == "👤 Profile":
+        if not await check_subscription(update, context):
+            return
+        bal = get_user(user.id, user.username)
+        full_name = user.full_name if user.full_name else "N/A"
+        username_str = f"@{user.username}" if user.username else "No Username"
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        ph = "%s" if DATABASE_URL else "?"
+        
+        cursor.execute(f"SELECT COUNT(*), SUM(price) FROM history WHERE user_id = {ph} AND platform != 'deposit'", (user.id,))
+        h_row = cursor.fetchone()
+        total_purchased = h_row[0] if h_row and h_row[0] else 0
+        total_spent = float(h_row[1]) if h_row and h_row[1] else 0.0
+
+        cursor.execute(f"SELECT SUM(price) FROM history WHERE user_id = {ph} AND platform = 'deposit'", (user.id,))
+        d_row = cursor.fetchone()
+        total_deposit = float(d_row[0]) if d_row and d_row[0] else 0.0
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute(f"SELECT purchase_date FROM history WHERE user_id = {ph} AND platform != 'deposit'", (user.id,))
+        all_dates = cursor.fetchall()
+        today_usage = sum(1 for d in all_dates if today_str in str(d[0]))
+
+        cursor.close()
+        conn.close()
+
+        profile_msg = (
+            "👤 **User Profile**\n\n"
+            f"🆔 **User ID:** `{user.id}`\n"
+            f"👤 **Full Name:** {full_name}\n"
+            f"📝 **Username:** {username_str}\n"
+            "🚦 **Status:** 🟢 Approved\n"
+            f"💰 **Balance:** {bal:.3f}\n"
+            f"💎 **Total Available:** {bal:.4f} USDT (🛒 {bal:.4f} + 👥 0.0000)\n"
+            "⏳ **Hold Balance:** 0 USDT\n"
+            f"📊 **Total Purchased:** {total_purchased}\n"
+            f"💵 **Total Spent:** {total_spent:.2f}\n"
+            f"💳 **Total Deposit:** {int(total_deposit) if total_deposit.is_integer() else total_deposit}\n"
+            f"✅ **Total OTP Received:** {total_purchased}\n"
+            "📈 **OTP Ratio:** 100.0%\n"
+            f"📅 **Today's Usage:** {today_usage}\n"
+            "⌛ **Pending Tasks:** 0/3"
+        )
+        await update.message.reply_text(profile_msg, parse_mode="Markdown")
+
+    elif text == "📅 Today":
+        if not await check_subscription(update, context):
+            return
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        ph = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = {ph} AND platform != 'deposit' ORDER BY purchase_date DESC", (user.id,))
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        if not rows:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_rows = [r for r in rows if today_str in str(r[3])]
+
+        if not today_rows:
             await update.message.reply_text("📅 Today's History:\n\nAji apni kono number kenen ni.")
             return
 
-        history_msg = "📅 Today's Purchase History:\n━━━━━━━━━━━━━━━━━━━━━\n"
-        for row in rows:
-            plat, data, prc, dt = row
-            dt_str = dt.strftime("%d-%m-%Y %I:%M:%S %p") if isinstance(dt, datetime) else str(dt)
-            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt_str}\n--------------------\n"
-        await update.message.reply_text(history_msg)
+        msg = "📅 Today's Purchase History:\n━━━━━━━━━━━━━━━━━━━━━\n"
+        for r in today_rows:
+            msg += f"📦 {r[0].upper()} | 💰 ${r[2]:.2f}\n🔑 Data: {r[1]}\n⏱ {r[3]}\n--------------------\n"
+        await update.message.reply_text(msg)
 
     elif text == "📜 History":
+        if not await check_subscription(update, context):
+            return
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(
-            f"SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = {placeholder} ORDER BY purchase_date DESC LIMIT 15",
-            (user.id,)
-        )
+        ph = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT platform, item_data, price, purchase_date FROM history WHERE user_id = {ph} AND platform != 'deposit' ORDER BY purchase_date DESC", (user.id,))
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
-
+        
         if not rows:
-            await update.message.reply_text("📜 Life-Time History:\n\nApnar kono purchase history nei.")
+            await update.message.reply_text("📜 Life-Time Purchase History is empty.")
             return
 
-        history_msg = "📜 Life-Time Purchase History (Last 15):\n━━━━━━━━━━━━━━━━━━━━━\n"
-        for row in rows:
-            plat, data, prc, dt = row
-            dt_str = dt.strftime("%d-%m-%Y %I:%M:%S %p") if isinstance(dt, datetime) else str(dt)
-            history_msg += f"📦 {plat.upper()} | 💰 ${prc:.2f}\n🔑 Data: {data}\n⏱ {dt_str}\n--------------------\n"
-        await update.message.reply_text(history_msg)
+        msg = "📜 **Life-Time Purchase History:**\n━━━━━━━━━━━━━━━━━━━━━\n"
+        for r in rows:
+            msg += f"📦 {r[0].upper()} | 💰 ${r[2]:.2f}\n🔑 Data: {r[1]}\n⏱ {r[3]}\n--------------------\n"
+            
+        if len(msg) > 4000:
+            file_name = f"Lifetime_History_{user.id}.txt"
+            with open(file_name, "w", encoding="utf-8") as f:
+                f.write(msg.replace("*", "").replace("━━━━━━━━━━━━━━━━━━━━━", "---------------------"))
+            with open(file_name, "rb") as f:
+                await update.message.reply_document(document=InputFile(f, filename=file_name), caption="📜 Your Life-Time Purchase History file.")
+            if os.path.exists(file_name):
+                os.remove(file_name)
+        else:
+            await update.message.reply_text(msg, parse_mode="Markdown")
 
-    elif text == "💸 Withdraw":
-        await update.message.reply_text("💸 Balance porjapto noi. Withdraw er jonno minimum balance $10 hote hobe.")
+    elif text == "💳 Deposit":
+        if not await check_subscription(update, context):
+            return
+        deposit_kb = ReplyKeyboardMarkup([
+            ["bKash/Nagad", "Binance"],
+            ["❌ Cancel"]
+        ], resize_keyboard=True)
+        await update.message.reply_text("💳 Please select your deposit method:", reply_markup=deposit_kb)
+        return
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = query.from_user
-    data = query.data
+    elif text == "bKash/Nagad":
+        if not await check_subscription(update, context):
+            return
+        bkash_msg = "💳 **bKash/Nagad Deposit:**\n\nSend money to: `01603282319` (Personal)\nAfter sending money, send TrxID to admin @Fbotphere."
+        await update.message.reply_text(bkash_msg, parse_mode="Markdown", reply_markup=get_main_keyboard())
+        return
 
-    if data == "pay_bkash":
-        await query.edit_message_text(
-            "📲 Mobile Banking Deposit\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "🟢 bKash Personal: `01603282319`\n"
-            "🟠 Nagad Personal: `01603282319`\n\n"
-            f"⚠️ Niyom: Send Money korar por Admin-ke Transaction ID o apnar User ID ({user.id}) likhe message din."
-        )
-    elif data == "pay_crypto":
-        await query.edit_message_text(
-            "🪙 Crypto Deposit (BEP-20 / USDT)\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "🌐 Network: BNB Smart Chain (BEP20)\n"
-            "💳 Wallet Address:\n`0x8f573aa283b98f570aacf3db0387b1c39118c29c`\n\n"
-            f"⚠️ Niyom: Deposit korar por Admin-ke Transaction Hash/TXID o apnar User ID ({user.id}) likhe message din."
-        )
+    elif text == "Binance":
+        if not await check_subscription(update, context):
+            return
+        binance_msg = "💳 **Binance Pay Deposit:**\n\nBinance Pay ID / USDT TRC20 Address: `YourBinanceWalletAddressHere`\nAfter payment, send TXID / Screenshot to admin @Fbotphere."
+        await update.message.reply_text(binance_msg, parse_mode="Markdown", reply_markup=get_main_keyboard())
+        return
+
+    elif text == "📚 Method":
+        if not await check_subscription(update, context):
+            return
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            ph = "%s" if DATABASE_URL else "?"
+            cursor.execute(f"SELECT value FROM settings WHERE key = {ph}", ("work_method",))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+
+            method_content = row[0] if row else "⚠️ No work method or instructions have been set by the admin yet."
+            
+            method_msg = (
+                "📚 **Work Methods & Guidelines:**\n\n"
+                f"{method_content}"
+            )
+            await update.message.reply_text(method_msg, parse_mode="Markdown")
+        except Exception as e:
+            await update.message.reply_text(f"📚 **Work Methods & Guidelines:**\n\n⚠️ Error loading method: {str(e)}")
+        return
+
+    elif text == "📞 Support":
+        await update.message.reply_text("📞 Admin: @Fbotphere")
 
 def main():
     server_thread = Thread(target=run_flask)
     server_thread.daemon = True
     server_thread.start()
 
-    application = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
-
+    application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("users", admin_users_command))
     application.add_handler(CommandHandler("add", add_stock))
     application.add_handler(CommandHandler("addbal", add_bal))
-    application.add_handler(CommandHandler("maintenance", maintenance_command))
-    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("setmethod", set_method_command))
+    application.add_handler(CommandHandler("delmethod", del_method_command))
+    application.add_handler(CallbackQueryHandler(callback_query_handler))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_callback))
 
-    print("Bot started with completely fixed Today button and unchanged main structure...")
+    print("Bot is running with /setmethod and /delmethod commands...")
     application.run_polling()
 
 if __name__ == "__main__":
